@@ -193,6 +193,7 @@ else
 	[ -e "/dev/nbd0" ] || modprobe nbd
 	loopdev=/dev/nbd0
 	qemu-nbd -c "$loopdev" "$image"
+	udevadm settle
 fi
 looppart="${loopdev}p3"
 
