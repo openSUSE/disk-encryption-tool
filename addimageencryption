@@ -131,16 +131,6 @@ isdigits()
 	[ -z "${v//[0-9]*/}" ]
 }
 
-report_progress()
-{
-	local bytes size
-	while read -r bytes size; do
-		isdigits "$bytes" || continue
-		isdigits "$size" || continue
-		printf "\rEncrypting... %d%%" "$((bytes*100/size))"
-	done
-}
-
 dialog_password()
 {
 	[ -z "$password" ] || return 0
@@ -155,6 +145,15 @@ dialog_password()
                 [ -n "$password" ] || err "No password, no encryption"
                 break
         done
+}
+
+encrypt()
+{
+	if type -p cryptsetup-reencrypt > /dev/null; then
+		echo "$password" | cryptsetup-reencrypt --new "$@"
+	else
+		echo "$password" | cryptsetup reencrypt --encrypt "$@"
+	fi
 }
 
 ####### main #######
@@ -222,15 +221,13 @@ unset mp
 log_info "resizing partition"
 echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -N 3 "$loopdev"
 
-echo -n "Encrypting..."
-echo "$password" | cryptsetup-reencrypt \
-	--new \
+echo "Encrypting..."
+encrypt \
 	--type luks1 \
 	--reduce-device-size 32m \
 	--progress-frequency=1 \
 	--iter-time 2000 \
 	"${looppart}"
-echo
 
 log_info "Encryption done"
 
