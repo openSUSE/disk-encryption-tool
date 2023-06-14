@@ -29,7 +29,13 @@ cleanup()
 		umount "$mp"
 	fi
 	[ -z "$crdev" ] || cryptsetup close "${crdev##*/}"
-	[ -z "$loopdev" ] || losetup -d "$loopdev"
+	if [ -n "$loopdev" ]; then
+		if [ "${loopdev#/dev/nbd}" != "$loopdev" ]; then
+			qemu-nbd -f qcow2 -d "$loopdev"
+		else
+			losetup -d "$loopdev"
+		fi
+	fi
 	rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -170,20 +176,27 @@ done
 
 [ -n "$1" ] || helpandquit
 
-[ -t 1 ] && interactive=1
-
-case "$1" in
-	*/SLE-Micro.x86_64-5.*-Default-GM.raw ) ;;
-	*) err "Unsupported image" ;;
-esac
-
 image="$1"
 shift
 
-log_info "setting up loop device"
-loopdev="$(losetup --show -fP "$image")"
+[ -t 1 ] && interactive=1
+
+case "${image##*/}" in
+	SLE-Micro.x86_64-5.*-Default-GM.raw ) ;;
+	openSUSE-MicroOS.x86_64-*-kvm-and-xen*.qcow2) ;;
+	*) err "Unsupported image" ;;
+esac
+
+if [ "${image%.qcow2}" = "$image" ]; then
+	log_info "setting up loop device"
+	loopdev="$(losetup --show -fP "$image")"
+	log_info "loop device $loopdev"
+else
+	[ -e "/dev/nbd0" ] || modprobe nbd
+	loopdev=/dev/nbd0
+	qemu-nbd -c "$loopdev" "$image"
+fi
 looppart="${loopdev}p3"
-log_info "loop device $loopdev"
 
 eval "$(blkid -o export "$looppart"|sed 's/^/loop_/')"
 
@@ -242,7 +255,7 @@ log_info "switch to rw"
 btrfs prop set -t s "$mp" ro false
 
 eval "$(blkid -o export "$looppart"|sed 's/^/loop_/')"
-echo cr_root /dev/disk/by-uuid/$loop_UUID none x-initrd.attach > "$mp"/etc/crypttab
+echo cr_root "/dev/disk/by-uuid/$loop_UUID" none x-initrd.attach > "$mp"/etc/crypttab
 echo GRUB_ENABLE_CRYPTODISK=y >> "$mp"/etc/default/grub
 
 for i in proc dev sys; do
@@ -265,4 +278,3 @@ log_info "set ro again"
 btrfs prop set -t s "$mp" ro true
 
 log_info "done"
-d --msgbox "Image successfully encrypted" 0 0
