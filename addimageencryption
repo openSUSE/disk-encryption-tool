@@ -82,6 +82,9 @@ read_password()
         while true; do
                 read -r -s -p "Enter encryption passphrase: " password
 		echo
+		if type -p pwscore &>/dev/null; then
+			echo "$password" | pwscore || continue
+		fi
                 read -r -s -p "Confirm encryption passphrase: " password2
 		echo
                 if [ "$password" != "$password2" ]; then
@@ -95,7 +98,7 @@ read_password()
 
 encrypt()
 {
-	if type -p cryptsetup-reencrypt > /dev/null; then
+	if type -p cryptsetup-reencrypt &> /dev/null; then
 		echo "$password" | cryptsetup-reencrypt --new "$@"
 	else
 		echo "$password" | cryptsetup reencrypt --encrypt "$@"
