@@ -223,22 +223,19 @@ log_info "resizing partition"
 echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -N 3 "$loopdev"
 
 echo -n "Encrypting..."
-echo "$password" | cryptsetup reencrypt -q \
-	--encrypt \
+echo "$password" | cryptsetup-reencrypt \
+	--new \
 	--type luks1 \
 	--reduce-device-size 32m \
-	--force-password \
-	--progress-json --progress-frequency=1 \
+	--progress-frequency=1 \
 	--iter-time 2000 \
-	"${looppart}" | \
-		sed -u -e 's/.*device_bytes":"\([0-9]*\).*device_size":"\([0-9]*\).*/\1 \2/' | \
-		report_progress
+	"${looppart}"
 echo
 
 log_info "Encryption done"
 
 log_info "grow partition again"
-echo "size=+" | sfdisk -N 3 "$loopdev"
+echo ", +" | sfdisk -N 3 "$loopdev"
 
 log_info "open encrypted image"
 echo "$password" | cryptsetup open "${looppart}" cr_root
