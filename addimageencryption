@@ -4,6 +4,10 @@
 set -e
 shopt -s nullglob
 
+unset "${!LC_*}"
+LANG="C.utf8"
+export LANG
+
 # set to --keep-title to use altenate screen. Better for debugging but causes flicker
 dialog_altenate_screen=
 dialog_backtitle="Image Encryption Tool"
@@ -115,12 +119,18 @@ fakereencrypt()
 	done < p
 }
 
+isdigits()
+{
+	local v="${1:?}"
+	[ -z "${v//[0-9]*/}" ]
+}
+
 calc_progress()
 {
 	local bytes size
 	while read -r bytes size; do
-		[ -z "${bytes//[0-9]*/}" ] || continue
-		[ -z "${size//[0-9]*/}" ] || continue
+		isdigits "$bytes" || continue
+		isdigits "$size" || continue
 		echo "$((bytes*100/size))"
 	done
 }
@@ -160,6 +170,8 @@ done
 
 [ -n "$1" ] || helpandquit
 
+[ -t 1 ] && interactive=1
+
 case "$1" in
 	*/SLE-Micro.x86_64-5.*-Default-GM.raw ) ;;
 	*) err "Unsupported image" ;;
@@ -168,22 +180,35 @@ esac
 image="$1"
 shift
 
-dialog_password
-
 log_info "setting up loop device"
 loopdev="$(losetup --show -fP "$image")"
 looppart="${loopdev}p3"
 log_info "loop device $loopdev"
+
+eval "$(blkid -o export "$looppart"|sed 's/^/loop_/')"
+
+[ "$loop_TYPE" != crypto_LUKS ] || err "Already encrypted"
+[ "$loop_TYPE" = btrfs ] || err "File system is $loop_TYPE but only btrfs is supported"
+
+dialog_password
 
 log_info "mounting fs"
 mkdir -p "$tmpdir/mnt"
 mount -t btrfs -o rw "${looppart}" "$tmpdir/mnt"
 mp="$tmpdir/mnt"
 
+read -r minsize bytes _rest < <(btrfs inspect-internal min-dev-size "$mp")
+isdigits "$minsize" || err "Failed to read minimum btrfs size"
+[ "$bytes" = 'bytes' ] || err "Failed to read minimum btrfs size"
+
 log_info "resizing fs"
-btrfs filesystem resize -64M "$mp"
+btrfs filesystem resize "$minsize" "$mp"
 umount "$mp"
 unset mp
+
+# shrink partition to a minimum so reencryption doesn't write everything
+log_info "resizing partition"
+echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -N 3 "$loopdev"
 
 log_info "Encrypting..."
 echo "$password" | cryptsetup reencrypt -q \
@@ -201,16 +226,23 @@ echo "$password" | cryptsetup reencrypt -q \
 log_info "Encryption done"
 d --infobox "Encryption done" 0 0
 
+log_info "grow partition again"
+echo "size=+" | sfdisk -N 3 "$loopdev"
+
 log_info "open encrypted image"
 echo "$password" | cryptsetup open "${looppart}" cr_root
 crdev="/dev/mapper/cr_root"
 mount -o rw "$crdev" "$tmpdir/mnt"
 mp="$tmpdir/mnt"
 
+log_info "resizing fs to max again"
+btrfs filesystem resize max "$mp"
+
+log_info "switch to rw"
 btrfs prop set -t s "$mp" ro false
 
-uuid="$(blkid -o export "$looppart"|sed -ne 's/^UUID=//p')"
-echo cr_root /dev/disk/by-uuid/$uuid none x-initrd.attach > "$mp"/etc/crypttab
+eval "$(blkid -o export "$looppart"|sed 's/^/loop_/')"
+echo cr_root /dev/disk/by-uuid/$loop_UUID none x-initrd.attach > "$mp"/etc/crypttab
 echo GRUB_ENABLE_CRYPTODISK=y >> "$mp"/etc/default/grub
 
 for i in proc dev sys; do
@@ -229,6 +261,8 @@ initrd="$(readlink "$mp/boot/initrd")"
 kv="${initrd#initrd-}"
 chroot "$mp" dracut -f "/boot/$initrd" "$kv"
 
+log_info "set ro again"
 btrfs prop set -t s "$mp" ro true
 
 log_info "done"
+d --msgbox "Image successfully encrypted" 0 0
