@@ -131,13 +131,13 @@ isdigits()
 	[ -z "${v//[0-9]*/}" ]
 }
 
-calc_progress()
+report_progress()
 {
 	local bytes size
 	while read -r bytes size; do
 		isdigits "$bytes" || continue
 		isdigits "$size" || continue
-		echo "$((bytes*100/size))"
+		printf "\rEncrypting... %d%%" "$((bytes*100/size))"
 	done
 }
 
@@ -178,8 +178,6 @@ done
 
 image="$1"
 shift
-
-[ -t 1 ] && interactive=1
 
 case "${image##*/}" in
 	SLE-Micro.x86_64-5.*-Default-GM.raw ) ;;
@@ -223,7 +221,7 @@ unset mp
 log_info "resizing partition"
 echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -N 3 "$loopdev"
 
-log_info "Encrypting..."
+echo -n "Encrypting..."
 echo "$password" | cryptsetup reencrypt -q \
 	--encrypt \
 	--type luks1 \
@@ -233,11 +231,10 @@ echo "$password" | cryptsetup reencrypt -q \
 	--iter-time 2000 \
 	"${looppart}" | \
 		sed -u -e 's/.*device_bytes":"\([0-9]*\).*device_size":"\([0-9]*\).*/\1 \2/' | \
-		calc_progress | \
-		d --gauge "Encrypting..." 0 0
+		report_progress
+echo
 
 log_info "Encryption done"
-d --infobox "Encryption done" 0 0
 
 log_info "grow partition again"
 echo "size=+" | sfdisk -N 3 "$loopdev"
