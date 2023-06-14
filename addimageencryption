@@ -196,7 +196,7 @@ else
 fi
 looppart="${loopdev}p3"
 
-eval "$(blkid -o export "$looppart"|sed 's/^/loop_/')"
+eval "$(blkid -c /dev/null -o export "$looppart"|sed 's/^/loop_/')"
 
 [ "$loop_TYPE" != crypto_LUKS ] || err "Already encrypted"
 [ "$loop_TYPE" = btrfs ] || err "File system is $loop_TYPE but only btrfs is supported"
@@ -251,7 +251,7 @@ btrfs filesystem resize max "$mp"
 log_info "switch to rw"
 btrfs prop set -t s "$mp" ro false
 
-eval "$(blkid -o export "$looppart"|sed 's/^/loop_/')"
+eval "$(blkid -c /dev/null -o export "$looppart"|sed 's/^/loop_/')"
 echo cr_root "/dev/disk/by-uuid/$loop_UUID" none x-initrd.attach > "$mp"/etc/crypttab
 echo GRUB_ENABLE_CRYPTODISK=y >> "$mp"/etc/default/grub
 
