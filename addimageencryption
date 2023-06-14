@@ -264,8 +264,24 @@ for i in /.snapshots /boot/efi /var; do
 done
 
 log_info "Update bootloader"
-# XXX: do for legacy and uefi?
+sed -i -e 's/^LOADER_TYPE=.*/LOADER_TYPE="grub2"/' "$mp"/etc/sysconfig/bootloader
 chroot "$mp" update-bootloader --reinit
+sed -i -e 's/^LOADER_TYPE=.*/LOADER_TYPE="grub2-efi"/' "$mp"/etc/sysconfig/bootloader
+chroot "$mp" update-bootloader --reinit
+mv "$mp/boot/grub2/grub.cfg" "$mp/boot/grub2/grub.cfg.bak"
+cat > "$mp/boot/grub2/grub.cfg" <<'EOF'
+set linux=linux
+set initrd=initrd
+if [ "${grub_cpu}" = "x86_64" -o "${grub_cpu}" = "i386" ]; then
+    if [ "${grub_platform}" = "efi" ]; then
+        set linux=linuxefi
+        set initrd=initrdefi
+    fi
+fi
+export linux initrd
+EOF
+sed -e 's/linuxefi/$linux/;s/initrdefi/$initrd/' < "$mp/boot/grub2/grub.cfg.bak" >> "$mp/boot/grub2/grub.cfg"
+rm "$mp/boot/grub2/grub.cfg.bak"
 
 initrd="$(readlink "$mp/boot/initrd")"
 kv="${initrd#initrd-}"
@@ -274,4 +290,4 @@ chroot "$mp" dracut -f "/boot/$initrd" "$kv"
 log_info "set ro again"
 btrfs prop set -t s "$mp" ro true
 
-log_info "done"
+echo "Image encryption completed"
