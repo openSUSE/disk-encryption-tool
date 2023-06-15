@@ -9,12 +9,11 @@ LANG="C.utf8"
 export LANG
 
 verbose=
-nl=$'\n'
 
 crdev=
-loopdev=
+blkdev=
 mp=
-tmpdir=$(mktemp -d -t sdboot.XXXXXX)
+tmpdir=$(mktemp -d -t addimageencryption.XXXXXX)
 cleanup()
 {
 	if [ -n "$mp" ]; then
@@ -25,13 +24,10 @@ cleanup()
 		umount "$mp"
 	fi
 	[ -z "$crdev" ] || cryptsetup close "${crdev##*/}"
-	if [ -n "$loopdev" ]; then
-		if [ "${loopdev#/dev/nbd}" != "$loopdev" ]; then
-			qemu-nbd -f qcow2 -d "$loopdev"
-		else
-			losetup -d "$loopdev"
-		fi
-	fi
+	case "$blkdev" in
+		/dev/nbd*) qemu-nbd -d "$blkdev" ;;
+		/dev/loop*) losetup -d "$blkdev" ;;
+	esac
 	rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -121,37 +117,37 @@ done
 
 [ -n "$1" ] || helpandquit
 
-image="$1"
-shift
-
-case "${image##*/}" in
-	SLE-Micro.x86_64-5.*-Default-GM.raw ) ;;
-	openSUSE-MicroOS.x86_64-*-kvm-and-xen*.qcow2) ;;
-	*) err "Unsupported image" ;;
-esac
-
-if [ "${image%.qcow2}" = "$image" ]; then
-	log_info "setting up loop device"
-	loopdev="$(losetup --show -fP "$image")"
-	log_info "loop device $loopdev"
+if [ -b "$1" ]; then
+	blkdev="$1"
+	blkpart="${blkdev}3"
 else
-	[ -e "/dev/nbd0" ] || modprobe nbd
-	loopdev=/dev/nbd0
-	qemu-nbd -c "$loopdev" "$image"
-	udevadm settle
+	case "${1##*/}" in
+		SLE-Micro.x86_64-5.*-Default-GM.raw )
+			log_info "setting up loop device"
+			blkdev="$(losetup --show -fP "$1")"
+			log_info "loop device $blkdev"
+			;;
+		openSUSE-MicroOS.x86_64-*-kvm-and-xen*.qcow2)
+			[ -e "/dev/nbd0" ] || modprobe nbd
+			blkdev=/dev/nbd0
+			qemu-nbd -c "$blkdev" "$1"
+			udevadm settle
+			;;
+		*) err "Unsupported image" ;;
+	esac
+	blkpart="${blkdev}p3"
 fi
-looppart="${loopdev}p3"
 
-eval "$(blkid -c /dev/null -o export "$looppart"|sed 's/^/loop_/')"
+eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 
 [ "$loop_TYPE" != crypto_LUKS ] || err "Already encrypted"
-[ "$loop_TYPE" = btrfs ] || err "File system is $loop_TYPE but only btrfs is supported"
+[ "$loop_TYPE" = btrfs ] || err "File system is ${loop_TYPE:-unknown} but only btrfs is supported"
 
 read_password
 
 log_info "mounting fs"
 mkdir -p "$tmpdir/mnt"
-mount -t btrfs -o rw "${looppart}" "$tmpdir/mnt"
+mount -t btrfs -o rw "${blkpart}" "$tmpdir/mnt"
 mp="$tmpdir/mnt"
 
 read -r minsize bytes _rest < <(btrfs inspect-internal min-dev-size "$mp")
@@ -165,7 +161,7 @@ unset mp
 
 # shrink partition to a minimum so reencryption doesn't write everything
 log_info "resizing partition"
-echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -N 3 "$loopdev"
+echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -N 3 "$blkdev"
 
 echo "Encrypting..."
 encrypt \
@@ -173,15 +169,15 @@ encrypt \
 	--reduce-device-size 32m \
 	--progress-frequency=1 \
 	--iter-time 2000 \
-	"${looppart}"
+	"${blkpart}"
 
 log_info "Encryption done"
 
 log_info "grow partition again"
-echo ", +" | sfdisk -N 3 "$loopdev"
+echo ", +" | sfdisk -N 3 "$blkdev"
 
 log_info "open encrypted image"
-echo "$password" | cryptsetup open "${looppart}" cr_root
+echo "$password" | cryptsetup open "${blkpart}" cr_root
 crdev="/dev/mapper/cr_root"
 mount -o rw "$crdev" "$tmpdir/mnt"
 mp="$tmpdir/mnt"
@@ -192,7 +188,7 @@ btrfs filesystem resize max "$mp"
 log_info "switch to rw"
 btrfs prop set -t s "$mp" ro false
 
-eval "$(blkid -c /dev/null -o export "$looppart"|sed 's/^/loop_/')"
+eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 echo cr_root "/dev/disk/by-uuid/$loop_UUID" none x-initrd.attach > "$mp"/etc/crypttab
 echo GRUB_ENABLE_CRYPTODISK=y >> "$mp"/etc/default/grub
 
