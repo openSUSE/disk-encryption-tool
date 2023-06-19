@@ -13,6 +13,7 @@ verbose=
 crdev=
 blkdev=
 mp=
+mounted=
 tmpdir=$(mktemp -d -t addimageencryption.XXXXXX)
 cleanup()
 {
@@ -21,13 +22,15 @@ cleanup()
 			mountpoint -q "$mp/$i" || continue
 			umount "$mp/$i"
 		done
-		umount "$mp"
+		[ -n "$mounted" ] || umount "$mp"
 	fi
-	[ -z "$crdev" ] || cryptsetup close "${crdev##*/}"
-	case "$blkdev" in
-		/dev/nbd*) qemu-nbd -d "$blkdev" ;;
-		/dev/loop*) losetup -d "$blkdev" ;;
-	esac
+	if [ -z "$mounted" ]; then
+		[ -z "$crdev" ] || cryptsetup close "${crdev##*/}"
+		case "$blkdev" in
+			/dev/nbd*) qemu-nbd -d "$blkdev" ;;
+			/dev/loop*) losetup -d "$blkdev" ;;
+		esac
+	fi
 	rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -103,39 +106,49 @@ encrypt()
 
 ####### main #######
 
-getopttmp=$(getopt -o hc:v --long help,verbose -n "${0##*/}" -- "$@")
+getopttmp=$(getopt -o hv --long help,verbose,mounted: -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
         case "$1" in
                 -h|--help) helpandquit ;;
 		-v|--verbose) verbose=$((++verbose)); shift ;;
+		--mounted) mounted="$2"; mp="$2"; shift 2 ;;
                 --) shift ; break ;;
                 *) echo "Internal error!" ; exit 1 ;;
         esac
 done
 
-[ -n "$1" ] || helpandquit
+[ -n "$mounted" -o -n "$1" ] || helpandquit
 
-if [ -b "$1" ]; then
-	blkdev="$1"
-	blkpart="${blkdev}3"
+if [ -n "$mounted" ]; then
+	mountpoint -q "$mp" || err "$mp is not a valid mountpoint"
+	blkpart="$(findmnt -nvo SOURCE "$mp")"
+	[ -L "/sys/class/block/${blkpart##*/}" ] || err "$blkpart is not a partition"
+	blkdev="$(readlink -f "/sys/class/block/${blkpart##*/}")"
+	blkdev="${blkdev%/*}"
+	blkdev="/dev/${blkdev##*/}"
 else
-	case "${1##*/}" in
-		SLE-Micro.x86_64-5.*-Default-GM.raw )
-			log_info "setting up loop device"
-			blkdev="$(losetup --show -fP "$1")"
-			log_info "loop device $blkdev"
-			;;
-		openSUSE-MicroOS.x86_64-*-kvm-and-xen*.qcow2)
-			[ -e "/dev/nbd0" ] || modprobe nbd
-			blkdev=/dev/nbd0
-			qemu-nbd -c "$blkdev" "$1"
-			udevadm settle
-			;;
-		*) err "Unsupported image" ;;
-	esac
-	blkpart="${blkdev}p3"
+	if [ -b "$1" ]; then
+		blkdev="$1"
+		blkpart="${blkdev}3"
+	else
+		case "${1##*/}" in
+			SLE-Micro.x86_64-5.*-Default-GM.raw )
+				log_info "setting up loop device"
+				blkdev="$(losetup --show -fP "$1")"
+				log_info "loop device $blkdev"
+				;;
+			openSUSE-MicroOS.x86_64-*-kvm-and-xen*.qcow2)
+				[ -e "/dev/nbd0" ] || modprobe nbd
+				blkdev=/dev/nbd0
+				qemu-nbd -c "$blkdev" "$1"
+				udevadm settle
+				;;
+			*) err "Unsupported image" ;;
+		esac
+		blkpart="${blkdev}p3"
+	fi
 fi
 
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
@@ -145,10 +158,12 @@ eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 
 read_password
 
-log_info "mounting fs"
-mkdir -p "$tmpdir/mnt"
-mount -t btrfs -o rw "${blkpart}" "$tmpdir/mnt"
-mp="$tmpdir/mnt"
+if [ -z "$mounted" ]; then
+	log_info "mounting fs"
+	mkdir -p "$tmpdir/mnt"
+	mount -t btrfs -o rw "${blkpart}" "$tmpdir/mnt"
+	mp="$tmpdir/mnt"
+fi
 
 read -r minsize bytes _rest < <(btrfs inspect-internal min-dev-size "$mp")
 isdigits "$minsize" || err "Failed to read minimum btrfs size"
@@ -179,8 +194,8 @@ echo ", +" | sfdisk -N 3 "$blkdev"
 log_info "open encrypted image"
 echo "$password" | cryptsetup open "${blkpart}" cr_root
 crdev="/dev/mapper/cr_root"
-mount -o rw "$crdev" "$tmpdir/mnt"
-mp="$tmpdir/mnt"
+mount -o rw "$crdev" "${mounted:-$tmpdir/mnt}"
+mp="${mounted:-$tmpdir/mnt}"
 
 log_info "resizing fs to max again"
 btrfs filesystem resize max "$mp"
