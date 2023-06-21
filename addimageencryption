@@ -125,7 +125,7 @@ call_dracut()
 	local initrd="$(readlink "$mp/boot/initrd")"
 	local kv="${initrd#initrd-}"
 	log_info "create initrd"
-	chroot "$mp" dracut -q -f "/boot/$initrd" "$kv"
+	chroot "$mp" dracut --add-drivers dm_crypt -q -f "/boot/$initrd" "$kv"
 }
 
 mountstuff()
