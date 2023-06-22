@@ -18,6 +18,10 @@ install() {
 	inst_multiple cryptsetup btrfs mktemp getopt mountpoint findmnt sfdisk tac sed
 
 	inst_script "$moddir"/addimageencryption /usr/bin/addimageencryption
+	inst_script "$moddir"/addimageencryption-initrd /usr/bin/addimageencryption-initrd
 
-	inst_hook pre-pivot 10 "$moddir/do-addimageencryption.sh"
+	for service in "addimageencryption-initrd.service"; do
+		inst_simple "${moddir}/$service" "${systemdsystemunitdir}/$service"
+		$SYSTEMCTL -q --root "$initdir" enable "$service"
+	done
 }

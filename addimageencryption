@@ -90,10 +90,27 @@ isdigits()
        [ -z "${v//[0-9]*/}" ]
 }
 
+settle_umount_events()
+{
+        # Manual umount confuses systemd sometimes because it's async and the
+        # .mount unit might still be active when the "start" is queued, making
+        # it a noop, which ultimately leaves /sysroot unmounted
+        # (https://github.com/systemd/systemd/issues/20329). To avoid that,
+        # wait until systemd processed the umount events. In a chroot (or with
+        # SYSTEMD_OFFLINE=1) systemctl always succeeds, so avoid an infinite loop.
+	if [ "$mounted" = "/sysroot" ] && ! systemctl --quiet is-active does-not-exist.mount; then
+		while systemctl --quiet is-active sysroot.mount; do sleep 0.5; done
+	fi
+}
+
 read_password()
 {
 	local password2
 	[ -z "$password" ] || return 0
+	if ! [ -t 0 ]; then
+		read -r -s password
+		return "$?"
+	fi
         while true; do
                 read -r -s -p "Enter encryption passphrase: " password
 		echo
@@ -125,7 +142,7 @@ call_dracut()
 	local initrd="$(readlink "$mp/boot/initrd")"
 	local kv="${initrd#initrd-}"
 	log_info "create initrd"
-	chroot "$mp" dracut --add-drivers dm_crypt -q -f "/boot/$initrd" "$kv"
+	chroot "$mp" dracut --add-drivers dm_crypt -q -f "/boot/$initrd" "$kv" "$@"
 }
 
 mountstuff()
@@ -158,50 +175,51 @@ make_ro()
 
 ####### main #######
 
-getopttmp=$(getopt -o hv --long help,verbose,mounted:,prime -n "${0##*/}" -- "$@")
+getopttmp=$(getopt -o hv --long help,verbose,prime -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
         case "$1" in
                 -h|--help) helpandquit ;;
 		-v|--verbose) verbose=$((++verbose)); shift ;;
-		--mounted) mounted="$2"; mp="$2"; shift 2 ;;
 		--prime) prime="1"; shift ;;
                 --) shift ; break ;;
                 *) echo "Internal error!" ; exit 1 ;;
         esac
 done
 
-[ -n "$mounted" -o -n "$1" ] || helpandquit
+[ -z "$1" ] && [ -e /etc/initrd-release ] && set -- /sysroot
 
-if [ -n "$mounted" ]; then
-	mountpoint -q "$mp" || err "$mp is not a valid mountpoint"
+[ -n "$1" ] || helpandquit
+
+if [ -d "$1" ]; then
+	mountpoint -q "$1" || err "$1 is not a valid mountpoint"
+	mp="$1"
+	mounted="$1"
 	blkpart="$(findmnt -nvo SOURCE "$mp")"
 	[ -L "/sys/class/block/${blkpart##*/}" ] || err "$blkpart is not a partition"
 	blkdev="$(readlink -f "/sys/class/block/${blkpart##*/}")"
 	blkdev="${blkdev%/*}"
 	blkdev="/dev/${blkdev##*/}"
+elif [ -b "$1" ]; then
+	blkdev="$1"
+	blkpart="${blkdev}3"
 else
-	if [ -b "$1" ]; then
-		blkdev="$1"
-		blkpart="${blkdev}3"
-	else
-		case "${1##*/}" in
-			SLE-Micro.x86_64-5.*-Default-GM.raw )
-				log_info "setting up loop device"
-				blkdev="$(losetup --show -fP "$1")"
-				log_info "loop device $blkdev"
-				;;
-			openSUSE-MicroOS.x86_64-*-kvm-and-xen*.qcow2)
-				[ -e "/dev/nbd0" ] || modprobe nbd
-				blkdev=/dev/nbd0
-				qemu-nbd -c "$blkdev" "$1"
-				udevadm settle
-				;;
-			*) err "Unsupported image" ;;
-		esac
-		blkpart="${blkdev}p3"
-	fi
+	case "${1##*/}" in
+		SLE-Micro.x86_64-5.*-Default-GM.raw )
+			log_info "setting up loop device"
+			blkdev="$(losetup --show -fP "$1")"
+			log_info "loop device $blkdev"
+			;;
+		openSUSE-MicroOS.x86_64-*-kvm-and-xen*.qcow2)
+			[ -e "/dev/nbd0" ] || modprobe nbd
+			blkdev=/dev/nbd0
+			qemu-nbd -c "$blkdev" "$1"
+			udevadm settle
+			;;
+		*) err "Unsupported image" ;;
+	esac
+	blkpart="${blkdev}p3"
 fi
 
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
@@ -215,6 +233,7 @@ if [ -z "$mounted" ]; then
 	mount -t btrfs -o rw "${blkpart}" "$tmpdir/mnt"
 	mp="$tmpdir/mnt"
 else
+	mountpoint -q "$mp" || err "$mp is not mounted"
 	findmnt -o SOURCE,TARGET,FSTYPE,OPTIONS -Rvn --pairs "$mp" > "$tmpdir/mounts"
 	mount -o remount,rw "$mp"
 fi
@@ -223,8 +242,11 @@ if [ -z "$prime" ]; then
 	read_password
 else
 	mkdir -p "$tmpdir/overlay-w"
-	for i in addimageencryption do-addimageencryption.sh module-setup.sh; do
-		install -D -m 0755 "${0%/*}/$i" "$tmpdir/overlay/95addimageencryption/$i"
+	dst="$tmpdir/overlay/95addimageencryption"
+	mkdir -p "$dst"
+	for i in addimageencryption addimageencryption-initrd module-setup.sh \
+			addimageencryption-initrd.service; do
+		cp "${0%/*}/$i" "$dst/$i"
 	done
 
 	make_rw
@@ -258,9 +280,11 @@ else
 fi
 unset mp
 
+settle_umount_events
+
 # shrink partition to a minimum so reencryption doesn't write everything
 log_info "resizing partition"
-echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -N 3 "$blkdev"
+echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -q -N 3 "$blkdev"
 udevadm settle
 
 echo "Encrypting..."
@@ -274,7 +298,7 @@ encrypt \
 log_info "Encryption done"
 
 log_info "grow partition again"
-echo ", +" | sfdisk -N 3 "$blkdev"
+echo ", +" | sfdisk -q -N 3 "$blkdev"
 
 log_info "open encrypted image"
 echo "$password" | cryptsetup open "${blkpart}" "$cr_name"

@@ -32,7 +32,7 @@ Release:        0
 Summary:        Tool to reencrypt kiwi raw images
 License:        MIT
 URL:            https://github.com/lnussel/addimageencryption
-Source:         aaa_base-%{version}.tar
+Source:         addimageencryption-%{version}.tar
 Requires:       cryptsetup
 
 %description
@@ -48,8 +48,8 @@ created as well as the grub2 config adjusted.
 %build
 
 %install
-for i in addimageencryption do-addimageencryption.sh module-setup.sh; do
-  install -m 755 -D %_sourcedir/$i %buildroot/usr/lib/dracut/modules.d/95addimageencryption/$i
+for i in addimageencryption{,-initrd,-initrd.service}  module-setup.sh; do
+  install -m 755 -D "$i" %buildroot/usr/lib/dracut/modules.d/95addimageencryption/$i
 done
 mkdir -p %buildroot/usr/bin
 ln -s ../lib/dracut/modules.d/95addimageencryption/addimageencryption %buildroot/usr/bin
@@ -57,6 +57,8 @@ ln -s ../lib/dracut/modules.d/95addimageencryption/addimageencryption %buildroot
 %files
 %license LICENSE
 /usr/bin/addimageencryption
+%dir /usr/lib/dracut
+%dir /usr/lib/dracut/modules.d
 /usr/lib/dracut/modules.d/95addimageencryption
 
 %changelog

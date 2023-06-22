@@ -1,0 +1,13 @@
+#!/bin/sh
+exec < /dev/console >/dev/console 2>&1
+type getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
+script=/run/combustion/mount/combustion/script
+if [ -e "$script" ] && grep -qE '^# combustion:(.*)\<encrypt\>' "$script"; then
+	systemctl start sysroot.mount
+	chmod a+x "$script"
+	"$script" --encrypt
+else
+	systemctl start sysroot.mount
+	#/usr/bin/addimageencryption -v < /dev/console >/dev/console 2>&1 || die "Encryption failed"
+	/usr/bin/addimageencryption -v || die "Encryption failed"
+fi
