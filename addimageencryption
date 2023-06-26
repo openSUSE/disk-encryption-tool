@@ -135,7 +135,7 @@ mountstuff()
 		mount --bind "/$i" "$mp/$i"
 	done
 
-	for i in /.snapshots /boot/efi /var; do
+	for i in /.snapshots /boot/efi /boot/writable /var; do
 		mountpoint -q "$mp/$i" && continue
 		mount -T "$mp"/etc/fstab --target-prefix="$mp" "/$i"
 	done
