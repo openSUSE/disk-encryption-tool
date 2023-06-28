@@ -24,4 +24,7 @@ install() {
 		inst_simple "${moddir}/$service" "${systemdsystemunitdir}/$service"
 		$SYSTEMCTL -q --root "$initdir" enable "$service"
 	done
+
+	: "${ENCRYPTION_CONFIG:=/etc/encrypt_options}"
+	[ -e "$ENCRYPTION_CONFIG" ] && inst_simple "$ENCRYPTION_CONFIG" "/etc/encrypt_options"
 }

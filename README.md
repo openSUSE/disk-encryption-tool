@@ -16,6 +16,12 @@ Example to encrypt on first boot:
 
     addimageencryption -v --prime SLE-Micro.x86_64-5.4.0-Default-GM.raw
 
+Parameters for cryptsetup-reencrypt(8) can be passed via
+/etc/encrypt_options. One option per line, e.g.
+
+   --type=luks1
+   --iter-time=2000
+
 It's also possible to integrate with combustion. The combustion
 script would have to look like this:
 

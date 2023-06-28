@@ -130,11 +130,31 @@ read_password()
 
 encrypt()
 {
-	if type -p cryptsetup-reencrypt &> /dev/null; then
-		echo "$password" | cryptsetup-reencrypt --new "$@"
-	else
-		echo "$password" | cryptsetup reencrypt --encrypt "$@"
+	local encrypt_options=(\
+		--reduce-device-size 32m \
+		--progress-frequency=1 \
+	)
+	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
+		while read -r op; do
+			[ "${op//#}" = "$op" ] || continue
+			encrypt_options+=("$op")
+		done < "${ENCRYPTION_CONFIG:-/etc/encrypt_options}"
 	fi
+	# sle 15 compat code
+	if type -p cryptsetup-reencrypt &> /dev/null; then
+		read_password
+
+		echo "$password" | cryptsetup-reencrypt --new --type luks1 "${encrypt_options[@]}" "$@" "${blkpart}"
+
+		log_info "Encryption done"
+
+		log_info "open encrypted image"
+		echo "$password" | cryptsetup open "${blkpart}" "$cr_name"
+	else
+		log_info "encrypt with options ${encrypt_options[*]}"
+		cryptsetup reencrypt -y --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
+	fi
+	cr_dev="/dev/mapper/$cr_name"
 }
 
 call_dracut()
@@ -221,6 +241,7 @@ else
 	esac
 	blkpart="${blkdev}p3"
 fi
+shift
 
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 
@@ -238,9 +259,7 @@ else
 	mount -o remount,rw "$mp"
 fi
 
-if [ -z "$prime" ]; then
-	read_password
-else
+if [ -n "$prime" ]; then
 	mkdir -p "$tmpdir/overlay-w"
 	dst="$tmpdir/overlay/95addimageencryption"
 	mkdir -p "$dst"
@@ -248,6 +267,10 @@ else
 			addimageencryption-initrd.service; do
 		cp "${0%/*}/$i" "$dst/$i"
 	done
+	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
+		cp "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" "$dst/encrypt_options"
+		export ENCRYPTION_CONFIG="/usr/lib/dracut/modules.d/95addimageencryption/encrypt_options"
+	fi
 
 	make_rw
 
@@ -288,21 +311,11 @@ echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -q -N 3 "$blkdev"
 udevadm settle
 
 echo "Encrypting..."
-encrypt \
-	--type luks1 \
-	--reduce-device-size 32m \
-	--progress-frequency=1 \
-	--iter-time 2000 \
-	"${blkpart}"
-
-log_info "Encryption done"
+encrypt "$@"
 
 log_info "grow partition again"
-echo ", +" | sfdisk -q -N 3 "$blkdev"
+echo ", +" | sfdisk --no-reread -q -N 3 "$blkdev"
 
-log_info "open encrypted image"
-echo "$password" | cryptsetup open "${blkpart}" "$cr_name"
-cr_dev="/dev/mapper/$cr_name"
 if [ -z "$mounted" ]; then
 	mount -o rw "$cr_dev" "/mnt"
 	mp="/mnt"
