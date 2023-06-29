@@ -15,6 +15,8 @@ switched_rw=
 cr_name='cr_root'
 cr_dev=
 blkdev=
+blkpart=
+partno=
 mp=
 mounted=
 tmpdir=$(mktemp -d -t addimageencryption.XXXXXX)
@@ -81,7 +83,6 @@ err()
 warn()
 {
 	echo "Warning: $*" >&2
-	exit 1
 }
 
 isdigits()
@@ -173,6 +174,8 @@ mountstuff()
 	done
 
 	for i in /.snapshots /boot/efi /boot/writable /var; do
+		grep -q "\s$i\s" "$mp/etc/fstab" || continue
+		[ -d "$mp/$i" ] || continue
 		mountpoint -q "$mp/$i" && continue
 		mount -T "$mp"/etc/fstab --target-prefix="$mp" "/$i"
 	done
@@ -195,7 +198,7 @@ make_ro()
 
 ####### main #######
 
-getopttmp=$(getopt -o hv --long help,verbose,prime -n "${0##*/}" -- "$@")
+getopttmp=$(getopt -o hv --long help,verbose,prime,partno: -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
@@ -203,6 +206,7 @@ while true ; do
                 -h|--help) helpandquit ;;
 		-v|--verbose) verbose=$((++verbose)); shift ;;
 		--prime) prime="1"; shift ;;
+		--partno) partno="$2"; shift 2;;
                 --) shift ; break ;;
                 *) echo "Internal error!" ; exit 1 ;;
         esac
@@ -212,26 +216,32 @@ done
 
 [ -n "$1" ] || helpandquit
 
-if [ -d "$1" ]; then
-	mountpoint -q "$1" || err "$1 is not a valid mountpoint"
-	mp="$1"
-	mounted="$1"
-	blkpart="$(findmnt -nvo SOURCE "$mp")"
+[ -z "$prime" ] && [ -e "/dev/mapper/$cr_name" ] && err "$cr_name exists. Exit."
+
+if [ -d "$1" ] || [ -b "$1" ]; then
+	if [ -b "$1" ]; then
+		blkpart="$1"
+	else
+		mountpoint -q "$1" || err "$1 is not a valid mountpoint"
+		mp="$1"
+		mounted="$1"
+		blkpart="$(findmnt -nvo SOURCE "$mp")"
+	fi
 	[ -L "/sys/class/block/${blkpart##*/}" ] || err "$blkpart is not a partition"
 	blkdev="$(readlink -f "/sys/class/block/${blkpart##*/}")"
 	blkdev="${blkdev%/*}"
 	blkdev="/dev/${blkdev##*/}"
-elif [ -b "$1" ]; then
-	blkdev="$1"
-	blkpart="${blkdev}3"
+	read -r partno < "/sys/class/block/${blkpart##*/}"/partition
 else
+	[ -n "$partno" ] || warn "--partno not specified, assuming 3"
+	: "${partno:=3}"
 	case "${1##*/}" in
-		SLE-Micro.x86_64-5.*-Default-GM.raw )
+		*.raw )
 			log_info "setting up loop device"
 			blkdev="$(losetup --show -fP "$1")"
 			log_info "loop device $blkdev"
 			;;
-		openSUSE-MicroOS.x86_64-*-kvm-and-xen*.qcow2)
+		*.qcow2)
 			[ -e "/dev/nbd0" ] || modprobe nbd
 			blkdev=/dev/nbd0
 			qemu-nbd -c "$blkdev" "$1"
@@ -239,7 +249,7 @@ else
 			;;
 		*) err "Unsupported image" ;;
 	esac
-	blkpart="${blkdev}p3"
+	blkpart="${blkdev}p${partno}"
 fi
 shift
 
@@ -307,14 +317,14 @@ settle_umount_events
 
 # shrink partition to a minimum so reencryption doesn't write everything
 log_info "resizing partition"
-echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -q -N 3 "$blkdev"
+echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -q -N "$partno" "$blkdev"
 udevadm settle
 
 echo "Encrypting..."
 encrypt "$@"
 
 log_info "grow partition again"
-echo ", +" | sfdisk --no-reread -q -N 3 "$blkdev"
+echo ", +" | sfdisk --no-reread -q -N "$partno" "$blkdev"
 
 if [ -z "$mounted" ]; then
 	mount -o rw "$cr_dev" "/mnt"
