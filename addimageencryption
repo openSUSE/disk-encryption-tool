@@ -10,6 +10,7 @@ export LANG
 
 verbose=
 prime=
+gen_key=
 
 switched_rw=
 cr_name='cr_root'
@@ -55,14 +56,16 @@ trap cleanup EXIT
 helpandquit()
 {
 	cat <<-EOF
-		Usage: $0 [OPTIONS] IMAGE
+		Usage: $0 [OPTIONS] IMAGE|BLOCKDEV
 
-		Encrypt IMAGE
+		Encrypt IMAGE or BLOCKDEV
 
 		OPTIONS:
-		  --verbose  verbose
-		  --prime    add hook scripts to initrd to encrypt on first boot
-		  -h         help screen
+		  --verbose       verbose
+		  --prime         add hook scripts to initrd to encrypt on first boot
+		  --partno=N      partition number (default 3)
+		  --gen-key       generate random recovery key
+		  -h              help screen
 
 	EOF
 	exit 0
@@ -153,17 +156,39 @@ encrypt()
 		echo "$password" | cryptsetup open "${blkpart}" "$cr_name"
 	else
 		log_info "encrypt with options ${encrypt_options[*]}"
-		cryptsetup reencrypt -y --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
+		if [ -n "$password" ]; then
+			# XXX: hopefully we can use the kernel keyring in the future here
+			echo -n "$password" | cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
+			[ -z "$gen_key" ] ||  echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
+		else
+			cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
+		fi
 	fi
 	cr_dev="/dev/mapper/$cr_name"
 }
 
 call_dracut()
 {
-	local initrd="$(readlink "$mp/boot/initrd")"
-	local kv="${initrd#initrd-}"
-	log_info "create initrd"
-	chroot "$mp" dracut --add-drivers dm_crypt -q -f "/boot/$initrd" "$kv" "$@"
+	if [ -L "$mp/boot/initrd" ]; then
+		local initrd kv
+		initrd="$(readlink "$mp/boot/initrd")"
+		kv="${initrd#initrd-}"
+		log_info "create initrd for $kv"
+		chroot "$mp" dracut --add-drivers dm_crypt -q -f "/boot/$initrd" "$kv" "$@"
+	elif [ -e "$mp/etc/kernel/entry-token" ]; then
+		local token kernel kv
+		read -r token < "$mp/etc/kernel/entry-token"
+		log_info "token $token"
+		for initrd in "$mp/boot/efi/$token"/*/initrd-*; do
+			kv="${initrd%/*}"
+			kv="${kv##*/}"
+			initrd="${initrd#"$mp"}"
+			log_info "create $initrd for $kv"
+			chroot "$mp" dracut --add qemu --add-drivers "dm_crypt nls_iso8859-1 nls_cp437" -q --reproducible -f "$initrd" "$kv" "$@"
+		done
+	else
+		err "Unsupported boot loader or fs layout"
+	fi
 }
 
 mountstuff()
@@ -198,7 +223,7 @@ make_ro()
 
 ####### main #######
 
-getopttmp=$(getopt -o hv --long help,verbose,prime,partno: -n "${0##*/}" -- "$@")
+getopttmp=$(getopt -o hv --long help,verbose,prime,partno:,gen-key -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
@@ -207,6 +232,7 @@ while true ; do
 		-v|--verbose) verbose=$((++verbose)); shift ;;
 		--prime) prime="1"; shift ;;
 		--partno) partno="$2"; shift 2;;
+		--gen-key) gen_key="1"; shift;;
                 --) shift ; break ;;
                 *) echo "Internal error!" ; exit 1 ;;
         esac
@@ -274,7 +300,7 @@ if [ -n "$prime" ]; then
 	dst="$tmpdir/overlay/95addimageencryption"
 	mkdir -p "$dst"
 	for i in addimageencryption addimageencryption-initrd module-setup.sh \
-			addimageencryption-initrd.service; do
+			addimageencryption-initrd.service generate-recovery-key; do
 		cp "${0%/*}/$i" "$dst/$i"
 	done
 	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
@@ -319,6 +345,13 @@ settle_umount_events
 log_info "resizing partition"
 echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -q -N "$partno" "$blkdev"
 udevadm settle
+
+if [ -n "$gen_key" ]; then
+	read -r password < <(generate-recovery-key)
+	echo "Recovery key: $password"
+	read -r key_id < <(echo -n "$password" | keyctl padd user addimageencryption-recovery-key @u)
+	log_info "Stored in user keyring with id $key_id"
+fi
 
 echo "Encrypting..."
 encrypt "$@"
@@ -373,6 +406,11 @@ if grep -q "LOADER_TYPE.*grub2" "$mp"/etc/sysconfig/bootloader; then
 	EOF
 	sed -e 's/linuxefi/$linux/;s/initrdefi/$initrd/' < "$mp/boot/grub2/grub.cfg.bak" >> "$mp/boot/grub2/grub.cfg"
 	rm "$mp/boot/grub2/grub.cfg.bak"
+elif [ -e "$mp/etc/kernel/entry-token" ]; then
+	: # sd-boot
+else
+	log_info "unsupported boot loader"
+	grep LOADER_TYPE "$mp"/etc/sysconfig/bootloader
 fi
 
 call_dracut

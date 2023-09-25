@@ -2,9 +2,6 @@
 Description=Encrypt root disk
 DefaultDependencies=false
 
-ConditionKernelCommandLine=|ignition.firstboot
-ConditionKernelCommandLine=|combustion.firstboot
-
 # /sysroot needs to be available, but it's temporarily stopped
 # for remounting so a direct requirement is not possible
 Requires=initrd-root-device.target
@@ -13,6 +10,7 @@ After=initrd-root-device.target
 # we want to run after combustion copied the config but before combustion
 # itself runs
 Requires=combustion.service
+After=firstboot-detect.service
 After=combustion-prepare.service
 Before=combustion.service
 
@@ -34,4 +32,4 @@ Type=oneshot
 ExecStart=/usr/bin/addimageencryption-initrd
 
 [Install]
-RequiredBy=initrd.target
+RequiredBy=firstboot.target

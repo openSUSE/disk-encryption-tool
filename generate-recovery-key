@@ -9,5 +9,5 @@ for ((i=0;i<"${#raw_key[@]}";++i)); do
 	c="${raw_key[i]}"
 	key="$key${modhex[$((c>>4))]}${modhex[$((c&15))]}"
 done
-[ -x /usr/bin/qrencode ] && echo -n "$key" | qrencode -t utf8i
+[ -x /usr/bin/qrencode ] && [ -t 1 ] && echo -n "$key" | qrencode -t utf8i
 echo "$key"
