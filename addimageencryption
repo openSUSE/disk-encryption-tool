@@ -158,7 +158,7 @@ encrypt()
 		log_info "encrypt with options ${encrypt_options[*]}"
 		if [ -n "$password" ]; then
 			# XXX: hopefully we can use the kernel keyring in the future here
-			echo -n "$password" | cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
+			cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name" <<<"$password"
 			[ -z "$gen_key" ] ||  echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
 		else
 			cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
@@ -311,6 +311,12 @@ if [ -n "$prime" ]; then
 	make_rw
 
 	mountstuff
+
+	# dirty
+	if [ -d "$mp/usr/share/jeos-firstboot/modules" ]; then
+		install -D -m 644 "${0%/*}/jeos-firstboot-diskencrypt-override.conf" "$mp/usr/lib/systemd/system/jeos-firstboot.service.d/jeos-firstboot-diskencrypt-override.conf"
+		cp "${0%/*}/jeos-firstboot-diskencrypt" "$mp/usr/share/jeos-firstboot/modules/diskencrypt"
+	fi
 
 	mount -t overlay overlay \
 		-o lowerdir="$mp/usr/lib/dracut/modules.d/,upperdir=$tmpdir/overlay,workdir=$tmpdir/overlay-w" \

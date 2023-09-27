@@ -1,0 +1,65 @@
+#!/bin/bash
+
+crypt_keyid=""
+crypt_pw=""
+crypt_devs=()
+
+diskencrypt_systemd_firstboot() {
+	crypt_keyid="$(keyctl search @u user addimageencryption-recovery-key)"
+	[ -n "$crypt_keyid" ] || return 0
+	local dev
+	while read -r dev fstype; do
+		[ "$fstype" = 'crypto_LUKS' ] || continue
+		crypt_devs+=("$dev")
+	done < <(lsblk --noheadings -o PATH,FSTYPE)
+	if [ -z "${crypt_devs[0]}" ]; then
+		d --msgbox $"Error: recovery set but no encrypted disks found" 0 0
+		unset crypt_keyid
+		return 0
+	fi
+
+	if [ -n "$password" ] && d --yesno $"Use root password as encryption password?" 0 0; then
+		crypt_pw="$password"
+	else
+		while true; do
+			d --insecure --passwordbox  $"Enter encryption password" 0 0
+			if [ -z "$result" ]; then
+				d --aspect 29 --msgbox $"No encryption password set. You can add more keys manually using cryptsetup." 0 0
+				break
+			fi
+			crypt_pw="$result"
+			d --insecure --passwordbox  $"Confirm encryption password" 0 0
+			[ "$crypt_pw" != "$result" ] || break
+			d --msgbox $"Passwords don't match. Try again" 0 0
+		done
+	fi
+}
+
+diskencrypt_post() {
+	[ -n "$crypt_keyid" ] || return 0
+	if [ -e '/usr/sbin/issue-generator' ] && [ -z "$dry" ]; then
+		mkdir -p "/run/issue.d/"
+		issuefile="/run/issue.d/90-diskencrypt.conf"
+	else
+		issuefile='/dev/stdout'
+	fi
+
+	echo -ne "Encryption recovery key:\n  " > "$issuefile"
+	keyctl pipe "$crypt_keyid" >> "$issuefile"
+	echo -e "\n" >> "$issuefile"
+	if [ -x /usr/bin/qrencode ]; then
+		echo "You can also scan it with your mobile phone:" >> "$issuefile"
+		keyctl pipe "$crypt_keyid" | qrencode -t utf8i >> "$issuefile"
+	fi
+
+	run issue-generator
+	[ -n "$dry" ] || cat "$issuefile"
+
+	if [ -n "$crypt_pw" ]; then
+		local dev
+		for dev in "${crypt_devs[@]}"; do
+			echo "adding password to $dev"
+			echo -n "$password" | run cryptsetup luksAddKey --verbose --batch-mode --force-password --key-file <(keyctl pipe "$crypt_keyid") "$dev"
+		done
+	fi
+}

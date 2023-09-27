@@ -48,17 +48,28 @@ created as well as the grub2 config adjusted.
 %build
 
 %install
-for i in addimageencryption{,-initrd,-initrd.service}  module-setup.sh; do
+for i in addimageencryption{,-initrd,-initrd.service}  module-setup.sh generate-recovery-key; do
   install -m 755 -D "$i" %buildroot/usr/lib/dracut/modules.d/95addimageencryption/$i
 done
 mkdir -p %buildroot/usr/bin
 ln -s ../lib/dracut/modules.d/95addimageencryption/addimageencryption %buildroot/usr/bin
+ln -s ../lib/dracut/modules.d/95addimageencryption/generate-recovery-key %buildroot/usr/bin
+install -D -m 644 jeos-firstboot-diskencrypt-override.conf \
+	%{buildroot}/usr/lib/systemd/system/jeos-firstboot.service.d/jeos-firstboot-diskencrypt-override.conf
+install -D -m 644 jeos-firstboot-diskencrypt %buildroot/usr/share/jeos-firstboot/modules/diskencrypt
 
 %files
 %license LICENSE
 /usr/bin/addimageencryption
+/usr/bin/generate-recovery-key
 %dir /usr/lib/dracut
 %dir /usr/lib/dracut/modules.d
 /usr/lib/dracut/modules.d/95addimageencryption
+%dir /usr/share/jeos-firstboot
+%dir /usr/share/jeos-firstboot/modules
+/usr/share/jeos-firstboot/modules/diskencrypt
+%dir /usr/lib/systemd/system/jeos-firstboot.service.d
+/usr/lib/systemd/system/jeos-firstboot.service.d/jeos-firstboot-diskencrypt-override.conf
 
 %changelog
+
