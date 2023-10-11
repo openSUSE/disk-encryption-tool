@@ -354,9 +354,8 @@ udevadm settle
 
 if [ -n "$gen_key" ]; then
 	read -r password < <(generate-recovery-key)
-	echo "Recovery key: $password"
+	echo -e "Recovery key: \e[1m$password\e[m"
 	read -r key_id < <(echo -n "$password" | keyctl padd user addimageencryption-recovery-key @u)
-	log_info "Stored in user keyring with id $key_id"
 fi
 
 echo "Encrypting..."
