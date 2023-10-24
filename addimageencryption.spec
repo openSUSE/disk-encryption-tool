@@ -48,8 +48,9 @@ created as well as the grub2 config adjusted.
 %build
 
 %install
+mkdir -p %buildroot/usr/lib/dracut/modules.d/95addimageencryption
 for i in addimageencryption{,-initrd,-initrd.service}  module-setup.sh generate-recovery-key; do
-  install -m 755 -D "$i" %buildroot/usr/lib/dracut/modules.d/95addimageencryption/$i
+  cp "$i" %buildroot/usr/lib/dracut/modules.d/95addimageencryption/$i
 done
 mkdir -p %buildroot/usr/bin
 ln -s ../lib/dracut/modules.d/95addimageencryption/addimageencryption %buildroot/usr/bin
