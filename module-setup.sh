@@ -17,11 +17,11 @@ install() {
 	inst_multiple -o cryptsetup-reencrypt
 	inst_multiple cryptsetup btrfs mktemp getopt mountpoint findmnt sfdisk tac sed hexdump keyctl
 
-	inst_script "$moddir"/addimageencryption /usr/bin/addimageencryption
-	inst_script "$moddir"/addimageencryption-initrd /usr/bin/addimageencryption-initrd
+	inst_script "$moddir"/disk-encryption-tool /usr/bin/disk-encryption-tool
+	inst_script "$moddir"/disk-encryption-tool-dracut /usr/bin/disk-encryption-tool-dracut
 	inst_script "$moddir"/generate-recovery-key /usr/bin/generate-recovery-key
 
-	for service in "addimageencryption-initrd.service"; do
+	for service in "disk-encryption-tool-dracut.service"; do
 		inst_simple "${moddir}/$service" "${systemdsystemunitdir}/$service"
 		$SYSTEMCTL -q --root "$initdir" enable "$service"
 		#$SYSTEMCTL -q --root "$initdir" enable "debug-shell.service"

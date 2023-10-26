@@ -15,5 +15,5 @@ elif getargbool 0 rd.encrypt || [ ! -e /sysroot/etc/machine-id ]; then
 	echo -ne '\a'
 	read -n1 -s -r -t 5 -p "Press ESC to prevent encrypting the disk" inhibitor
 	echo
-	[ "$inhibitor" = $'\e' ] || /usr/bin/addimageencryption -v --gen-key || die "Encryption failed"
+	[ "$inhibitor" = $'\e' ] || /usr/bin/disk-encryption-tool -v --gen-key || die "Encryption failed"
 fi

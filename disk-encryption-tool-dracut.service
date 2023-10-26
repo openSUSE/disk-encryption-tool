@@ -29,7 +29,7 @@ OnFailureJobMode=isolate
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/addimageencryption-initrd
+ExecStart=/usr/bin/disk-encryption-tool-dracut
 
 [Install]
 RequiredBy=firstboot.target

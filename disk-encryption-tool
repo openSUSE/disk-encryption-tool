@@ -20,7 +20,7 @@ blkpart=
 partno=
 mp=
 mounted=
-tmpdir=$(mktemp -d -t addimageencryption.XXXXXX)
+tmpdir=$(mktemp -d -t disk-encryption-tool.XXXXXX)
 cleanup()
 {
 	set +e
@@ -297,15 +297,15 @@ fi
 
 if [ -n "$prime" ]; then
 	mkdir -p "$tmpdir/overlay-w"
-	dst="$tmpdir/overlay/95addimageencryption"
+	dst="$tmpdir/overlay/95disk-encryption-tool"
 	mkdir -p "$dst"
-	for i in addimageencryption addimageencryption-initrd module-setup.sh \
-			addimageencryption-initrd.service generate-recovery-key; do
+	for i in disk-encryption-tool disk-encryption-tool-dracut module-setup.sh \
+			disk-encryption-tool-dracut.service generate-recovery-key; do
 		cp "${0%/*}/$i" "$dst/$i"
 	done
 	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
 		cp "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" "$dst/encrypt_options"
-		export ENCRYPTION_CONFIG="/usr/lib/dracut/modules.d/95addimageencryption/encrypt_options"
+		export ENCRYPTION_CONFIG="/usr/lib/dracut/modules.d/95disk-encryption-tool/encrypt_options"
 	fi
 
 	make_rw
@@ -355,7 +355,7 @@ udevadm settle
 if [ -n "$gen_key" ]; then
 	read -r password < <(generate-recovery-key)
 	echo -e "Recovery key: \e[1m$password\e[m"
-	read -r key_id < <(echo -n "$password" | keyctl padd user addimageencryption-recovery-key @u)
+	read -r key_id < <(echo -n "$password" | keyctl padd user disk-encryption-tool-recovery-key @u)
 fi
 
 echo "Encrypting..."

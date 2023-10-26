@@ -5,7 +5,7 @@ crypt_pw=""
 crypt_devs=()
 
 diskencrypt_systemd_firstboot() {
-	crypt_keyid="$(keyctl search @u user addimageencryption-recovery-key)"
+	crypt_keyid="$(keyctl search @u user disk-encryption-tool-recovery-key)"
 	[ -n "$crypt_keyid" ] || return 0
 	local dev
 	while read -r dev fstype; do
