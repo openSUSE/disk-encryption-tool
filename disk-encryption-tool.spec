@@ -34,6 +34,7 @@ License:        MIT
 URL:            https://github.com/lnussel/disk-encryption-tool
 Source:         disk-encryption-tool-%{version}.tar
 Requires:       cryptsetup
+Requires:       keyutils
 
 %description
 Convert a plain text kiwi image into one with LUKS full disk
