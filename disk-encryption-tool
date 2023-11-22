@@ -355,7 +355,7 @@ udevadm settle
 if [ -n "$gen_key" ]; then
 	read -r password < <(generate-recovery-key)
 	echo -e "Recovery key: \e[1m$password\e[m"
-	read -r key_id < <(echo -n "$password" | keyctl padd user disk-encryption-tool-recovery-key @u)
+	read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
 fi
 
 echo "Encrypting..."
