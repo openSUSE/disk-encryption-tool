@@ -29,6 +29,7 @@ OnFailureJobMode=isolate
 
 [Service]
 Type=oneshot
+KeyringMode=shared
 ExecStart=/usr/bin/disk-encryption-tool-dracut
 
 [Install]

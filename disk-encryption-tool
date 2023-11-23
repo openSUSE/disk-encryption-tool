@@ -355,7 +355,9 @@ udevadm settle
 if [ -n "$gen_key" ]; then
 	read -r password < <(generate-recovery-key)
 	echo -e "Recovery key: \e[1m$password\e[m"
-	read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
+	if [ -e /etc/initrd-release ]; then
+		read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
+	fi
 fi
 
 echo "Encrypting..."
@@ -363,6 +365,16 @@ encrypt "$@"
 
 log_info "grow partition again"
 echo ", +" | sfdisk --no-reread -q -N "$partno" "$blkdev"
+if [ -e /etc/initrd-release ]; then
+	# seems to be the only way to tell the kernel about a specific partition change
+	partx -u --nr "$partno" "$blkdev" || :
+	# now resize the mapping. For some reason cryptsetup wants a passphrase. Hack
+	# around this by installing a token that makes it read the key we installed
+	# before, then remove the token again o_O
+	cryptsetup token add --key-slot 0 --key-description cryptenroll --token-id 9 "$blkpart"
+	cryptsetup resize "$cr_name" < /dev/null
+	cryptsetup token remove --token-id 9 "$blkpart"
+fi
 
 if [ -z "$mounted" ]; then
 	mount -o rw "$cr_dev" "/mnt"
