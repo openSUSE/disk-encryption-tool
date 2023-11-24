@@ -1,0 +1,135 @@
+#!/bin/bash
+
+crypt_keyid=""
+with_fido2=
+with_tpm2=
+
+# TODO: The kernel is measured in PCR4 and initrd in PCR9.  When the
+# json gets stored in ESP. For how initr is named (with a hash) PCR12
+# (cmdline) cannot be used now until PCR9 (cmdline, initrd) can be
+# used via a dract module that extend initrd in memory.
+# TODO: Move it into a configuration file. Also replicated in
+# sdbootutil
+pcrs="0,2,4,7"
+
+enroll_systemd_firstboot() {
+    crypt_keyid="$(keyctl id %user:cryptenroll)"
+    [ -n "$crypt_keyid" ] || return 0
+    [ -e /usr/bin/systemd-cryptenroll ] || return 0
+
+    local has_fido2=
+    local has_tpm2=
+
+    grep -q 'No FIDO2' <<<"$(systemd-cryptenroll --fido2-device=list 2>&1)" || has_fido2=1
+    [ -e '/sys/class/tpm/tpm0' ] && has_tpm2=1
+
+   # For now seems that if a FIDO2 key is enrolled, it will take
+   # precedence over the TPM2 and the key will be asked to be present
+   # in subsequent boots.
+   if [ "$has_fido2" = '1' ] && [ "$has_tpm2" = '1' ]; then
+	local list=('FIDO2' 'Key'  'TPM2' 'Device')
+	d --default-item 'FIDO2' --menu $"Select unlock device" 0 0 "$(menuheight ${#list[@]})" "${list[@]}"
+	[ "$result" = 'FIDO2' ] && with_fido2=1
+	[ "$result" = 'TPM2' ] && with_tpm2=1
+	return 0
+    fi
+    [ "$has_fido2" = '1' ] && with_fido2=1
+    [ "$has_tpm2" = '1' ] && with_tpm2=1
+}
+
+enroll_fido2() {
+    local dev="$1"
+
+    echo "Enrolling with FIDO2: $dev"
+
+    # The password is read from "cryptenroll" kernel keyring
+    run systemd-cryptenroll --fido2-device=auto "$dev"
+}
+
+generate_key() {
+    [ -z "$dry" ] && mkdir -p /etc/systemd
+    run pcr-oracle \
+	--rsa-generate-key \
+	--rsa-public-pem \
+	--private-key /etc/systemd/tpm2-pcr-private-key.pem \
+	--public-key /etc/systemd/tpm2-pcr-public-key.pem \
+	store-public-key
+}
+
+enroll_tpm2() {
+    local dev="$1"
+
+    echo "Enrolling with TPM2: $dev"
+
+    # The password is read from "cryptenroll" kernel keyring
+    # XXX: Wipe is separated by now (possible systemd bug)
+    run systemd-cryptenroll \
+	--wipe-slot=tpm2 \
+	"$dev"
+
+    run systemd-cryptenroll \
+	--wipe-slot=tpm2 \
+	--tpm2-device=auto \
+	--tpm2-public-key=/etc/systemd/tpm2-pcr-public-key.pem \
+	--tpm2-public-key-pcrs="$pcrs" \
+	"$dev"
+}
+
+update_crypttab_options() {
+    # This version will share the same options for all crypto_LUKS
+    # devices.  This imply that all of them will be unlocked by the
+    # same TPM2, or the same FIDO2 key
+    local options="$1"
+
+    [ -z "$dry" ] || return
+    
+    # TODO: this needs to be unified with disk-encryption-tool
+    local crypttab="$(mktemp)"
+    echo "# File created by jeos-firstboot-enroll.  Comments will be removed" > "$crypttab"
+
+    local name
+    local device
+    local key
+    local opts
+    while read -r name device key opts; do
+	[[ "$name" = \#* ]] && continue
+	[ -z "$dry" ] && echo "$name $device $key $options" >> "$crypttab"
+    done < /etc/crypttab
+
+    mv "$crypttab" /etc/crypttab
+    chmod 644 /etc/crypttab
+}
+
+enroll_post() {
+    [ -n "$crypt_keyid" ] || return 0
+    [ -e /usr/bin/systemd-cryptenroll ] || return 0
+
+    local dev
+    local fstype
+    while read -r dev fstype; do
+	[ "$fstype" = 'crypto_LUKS' ] || continue
+	crypt_devs+=("$dev")
+    done < <(lsblk --noheadings -o PATH,FSTYPE)
+
+    crypttab_options="x-initrd.attach"
+
+    if [ "$with_fido2" = '1' ]; then
+	for dev in "${crypt_devs[@]}"; do
+	    enroll_fido2 "$dev"
+	done
+	crypttab_options+=",fido2-device=auto"
+    fi
+
+    if [ "$with_tpm2" = '1' ]; then
+	generate_key
+	
+	for dev in "${crypt_devs[@]}"; do
+	    enroll_tpm2 "$dev"
+	done
+	crypttab_options+=",tpm2-device=auto"
+    fi
+
+    update_crypttab_options "$crypttab_options"
+
+    run sdbootutil add-all-kernels --no-reuse-initrd
+}
