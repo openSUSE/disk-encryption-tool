@@ -35,6 +35,7 @@ URL:            https://github.com/lnussel/disk-encryption-tool
 Source:         disk-encryption-tool-%{version}.tar
 Requires:       cryptsetup
 Requires:       keyutils
+Requires:       pcr-oracle
 
 %description
 Convert a plain text kiwi image into one with LUKS full disk
@@ -59,6 +60,7 @@ ln -s ../lib/dracut/modules.d/95disk-encryption-tool/generate-recovery-key %buil
 install -D -m 644 jeos-firstboot-diskencrypt-override.conf \
 	%{buildroot}/usr/lib/systemd/system/jeos-firstboot.service.d/jeos-firstboot-diskencrypt-override.conf
 install -D -m 644 jeos-firstboot-diskencrypt %buildroot/usr/share/jeos-firstboot/modules/diskencrypt
+install -D -m 644 jeos-firstboot-enroll %buildroot/usr/share/jeos-firstboot/modules/enroll
 
 %files
 %license LICENSE
@@ -70,6 +72,7 @@ install -D -m 644 jeos-firstboot-diskencrypt %buildroot/usr/share/jeos-firstboot
 %dir /usr/share/jeos-firstboot
 %dir /usr/share/jeos-firstboot/modules
 /usr/share/jeos-firstboot/modules/diskencrypt
+/usr/share/jeos-firstboot/modules/enroll
 %dir /usr/lib/systemd/system/jeos-firstboot.service.d
 /usr/lib/systemd/system/jeos-firstboot.service.d/jeos-firstboot-diskencrypt-override.conf
 
