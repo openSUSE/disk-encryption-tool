@@ -17,24 +17,26 @@ enroll_systemd_firstboot() {
     [ -n "$crypt_keyid" ] || return 0
     [ -e /usr/bin/systemd-cryptenroll ] || return 0
 
-    local has_fido2=
+    local has_fido2=${JEOS_HAS_FIDO2:-}
     local has_tpm2=
 
-    grep -q 'No FIDO2' <<<"$(systemd-cryptenroll --fido2-device=list 2>&1)" || has_fido2=1
+    [ -z "$(systemd-cryptenroll --fido2-device=list 2>/dev/null)" ] || has_fido2=1
     [ -e '/sys/class/tpm/tpm0' ] && has_tpm2=1
 
    # For now seems that if a FIDO2 key is enrolled, it will take
    # precedence over the TPM2 and the key will be asked to be present
    # in subsequent boots.
    if [ "$has_fido2" = '1' ] && [ "$has_tpm2" = '1' ]; then
-	local list=('FIDO2' 'Key'  'TPM2' 'Device')
-	d --default-item 'FIDO2' --menu $"Select unlock device" 0 0 "$(menuheight ${#list[@]})" "${list[@]}"
+	local list=('FIDO2' 'FIDO2' 'TPM2' 'TPM2' 'none' $"Skip")
+	d --no-tags --default-item 'FIDO2' --menu $"Select unlock device" 0 0 "$(menuheight ${#list[@]})" "${list[@]}"
 	[ "$result" = 'FIDO2' ] && with_fido2=1
 	[ "$result" = 'TPM2' ] && with_tpm2=1
-	return 0
+    elif [ "$has_fido2" ]; then
+	dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Unlock encrypted disk via FIDO2 token?" 0 0 && with_fido2=1
+    elif [ "$has_tpm2" ]; then
+	dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Unlock encrypted disk via TPM?" 0 0 && with_tpm2=1
     fi
-    [ "$has_fido2" = '1' ] && with_fido2=1
-    [ "$has_tpm2" = '1' ] && with_tpm2=1
+    return 0
 }
 
 enroll_fido2() {
@@ -81,10 +83,13 @@ update_crypttab_options() {
     # same TPM2, or the same FIDO2 key
     local options="$1"
 
-    [ -z "$dry" ] || return
-    
     # TODO: this needs to be unified with disk-encryption-tool
-    local crypttab="$(mktemp)"
+    local crypttab
+    if [ -z "$dry" ]; then
+	    crypttab="$(mktemp -t disk-encryption-tool.crypttab.XXXXXX)"
+    else
+	    crypttab=/dev/stdout
+    fi
     echo "# File created by jeos-firstboot-enroll.  Comments will be removed" > "$crypttab"
 
     local name
@@ -93,11 +98,11 @@ update_crypttab_options() {
     local opts
     while read -r name device key opts; do
 	[[ "$name" = \#* ]] && continue
-	[ -z "$dry" ] && echo "$name $device $key $options" >> "$crypttab"
+	echo "$name $device $key $options" >> "$crypttab"
     done < /etc/crypttab
 
-    mv "$crypttab" /etc/crypttab
-    chmod 644 /etc/crypttab
+    run mv "$crypttab" /etc/crypttab
+    run chmod 644 /etc/crypttab
 }
 
 enroll_post() {
@@ -106,10 +111,12 @@ enroll_post() {
 
     local dev
     local fstype
-    while read -r dev fstype; do
-	[ "$fstype" = 'crypto_LUKS' ] || continue
-	crypt_devs+=("$dev")
-    done < <(lsblk --noheadings -o PATH,FSTYPE)
+    if [ -z "$crypt_devs" ]; then
+	    while read -r dev fstype; do
+		[ "$fstype" = 'crypto_LUKS' ] || continue
+		crypt_devs+=("$dev")
+	    done < <(lsblk --noheadings -o PATH,FSTYPE)
+    fi
 
     crypttab_options="x-initrd.attach"
 
