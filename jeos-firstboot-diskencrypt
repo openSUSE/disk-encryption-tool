@@ -18,7 +18,7 @@ diskencrypt_systemd_firstboot() {
 		return 0
 	fi
 
-	if [ -n "$password" ] && d --yesno $"Use root password as encryption password?" 0 0; then
+	if [ -n "$password" ] && dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Use root password as encryption password?" 0 0; then
 		crypt_pw="$password"
 	else
 		while true; do
