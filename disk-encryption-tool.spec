@@ -36,6 +36,8 @@ Source:         disk-encryption-tool-%{version}.tar
 Requires:       cryptsetup
 Requires:       keyutils
 Requires:       pcr-oracle
+# something needs to require it. Can be us.
+Requires:       tpm2.0-tools
 
 %description
 Convert a plain text kiwi image into one with LUKS full disk
