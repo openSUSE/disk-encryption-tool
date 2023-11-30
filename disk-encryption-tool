@@ -396,10 +396,6 @@ btrfs filesystem resize max "$mp"
 make_rw
 
 crypttab_options="x-initrd.attach"
-# this triggers dracut to add tpm2 code. should actually look at tokens
-if [ -e "/sys/class/tpm/tpm0" ]; then
-	crypttab_options+=",tpm2-device=auto"
-fi
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 echo "$cr_name /dev/disk/by-uuid/$loop_UUID none $crypttab_options" > "$mp"/etc/crypttab
 
