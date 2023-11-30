@@ -4,8 +4,8 @@ crypt_keyid=""
 with_fido2=
 with_tpm2=
 
-# TODO: Move it into a configuration file. Also replicated in
-# sdbootutil
+# After the enrolling, other tools can find this list in the LUKS
+# header
 pcrs="0,2,4,7,9"
 
 enroll_systemd_firstboot() {
