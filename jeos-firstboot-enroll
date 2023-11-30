@@ -65,7 +65,6 @@ enroll_tpm2() {
 	"$dev"
 
     run systemd-cryptenroll \
-	--wipe-slot=tpm2 \
 	--tpm2-device=auto \
 	--tpm2-public-key=/etc/systemd/tpm2-pcr-public-key.pem \
 	--tpm2-public-key-pcrs="$pcrs" \
