@@ -395,9 +395,13 @@ btrfs filesystem resize max "$mp"
 
 make_rw
 
-crypttab_options="x-initrd.attach"
+declare loop_UUID
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
-echo "$cr_name /dev/disk/by-uuid/$loop_UUID none $crypttab_options" > "$mp"/etc/crypttab
+if [ -n "$loop_UUID" ]; then
+	echo "$cr_name /dev/disk/by-uuid/$loop_UUID none x-initrd.attach" > "$mp"/etc/crypttab
+else
+	warn "Can't determine device UUID. Can't generate crypttab"
+fi
 
 mountstuff
 
