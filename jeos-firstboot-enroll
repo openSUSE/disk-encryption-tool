@@ -48,7 +48,6 @@ generate_key() {
     [ -z "$dry" ] && mkdir -p /etc/systemd
     run pcr-oracle \
 	--rsa-generate-key \
-	--rsa-public-pem \
 	--private-key /etc/systemd/tpm2-pcr-private-key.pem \
 	--public-key /etc/systemd/tpm2-pcr-public-key.pem \
 	store-public-key
