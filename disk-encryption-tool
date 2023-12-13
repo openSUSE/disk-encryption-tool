@@ -208,6 +208,9 @@ mountstuff()
 
 make_rw()
 {
+	local prop
+	read -r prop < <(btrfs prop get -t s "$mp" ro)
+	[ "$prop" = "ro=true" ] || return 0
 	log_info "switch to rw"
 	btrfs prop set -t s "$mp" ro false
 	switched_rw=1
