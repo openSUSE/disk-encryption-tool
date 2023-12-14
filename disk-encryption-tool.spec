@@ -38,6 +38,7 @@ Requires:       keyutils
 Requires:       pcr-oracle
 # something needs to require it. Can be us.
 Requires:       tpm2.0-tools
+ExclusiveArch:  aarch64 ppc64le riscv64 x86_64
 
 %description
 Convert a plain text kiwi image into one with LUKS full disk
