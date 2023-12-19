@@ -184,7 +184,7 @@ call_dracut()
 			kv="${kv##*/}"
 			initrd="${initrd#"$mp"}"
 			log_info "create $initrd for $kv"
-			chroot "$mp" dracut --add qemu --add-drivers "dm_crypt nls_iso8859-1 nls_cp437" -q --reproducible -f "$initrd" "$kv" "$@"
+			hostonly_l=no chroot "$mp" dracut -q --reproducible -f "$initrd" "$kv" "$@"
 		done
 	else
 		err "Unsupported boot loader or fs layout"

@@ -39,9 +39,9 @@ It's also possible to integrate with combustion. The combustion
 script would have to look like this:
 
     #!/bin/bash
-    # combustion: encrypt
-    if [ "$1" = "--encrypt" ]; then
-        echo 12345 | disk-encryption-tool -v --gen-key
+    # combustion: prepare
+    if [ "$1" = "--prepare" ]; then
+        echo 12345 | disk-encryption-tool -v
     else
         echo root:12345 | chpasswd
     fi

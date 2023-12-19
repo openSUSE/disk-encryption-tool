@@ -1,19 +1,17 @@
 #!/bin/sh
 exec < /dev/console >/dev/console 2>&1
 type getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
-script=/run/combustion/mount/combustion/script
-if [ -e "$script" ] && grep -qE '^# combustion:(.*)\<encrypt\>' "$script"; then
+script=/dev/shm/combustion/config/script
+if [ -e "$script" ]; then
+	echo "combustion found, no encryption"
+	exit 0
+fi
+if getargbool 0 rd.encrypt || [ ! -e /sysroot/etc/machine-id ]; then
 	systemctl start sysroot.mount
 	# silence systemd
 	kill -SIGRTMIN+21 1
-	chmod a+x "$script"
-	"$script" --encrypt
-elif getargbool 0 rd.encrypt || [ ! -e /sysroot/etc/machine-id ]; then
-	systemctl start sysroot.mount
-	# silence systemd
-	kill -SIGRTMIN+21 1
-	echo -ne '\a'
-	read -n1 -s -r -t 5 -p "Press ESC to prevent encrypting the disk" inhibitor
+	echo -ne '\n\n\a'
+	read -n1 -s -r -t 10 -p "*** Press ESC to prevent encrypting the disk" inhibitor
 	echo
 	[ "$inhibitor" = $'\e' ] || /usr/bin/disk-encryption-tool -v --gen-key || die "Encryption failed"
 fi
