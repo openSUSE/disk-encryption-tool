@@ -1,17 +1,34 @@
 #!/bin/bash
 
-crypt_keyid=""
 with_fido2=
 with_tpm2=
+
+declare -a luks2_devices
 
 # After the enrolling, other tools can find this list in the LUKS
 # header
 pcrs="0,2,4,7,9"
 
+have_luks2()
+{
+       [ "${#luks2_devices[@]}" -gt 0 ]
+}
+
+detect_luks2()
+{
+    local dev fstype
+    [ -z "$luks2_devices" ] || return 0
+    while read -r dev fstype; do
+	[ "$fstype" = 'crypto_LUKS' ] || continue
+	cryptsetup isLuks --type luks2 "$dev" || continue
+	luks2_devices+=("$dev")
+    done < <(lsblk --noheadings -o PATH,FSTYPE)
+    have_luks2
+}
+
 enroll_systemd_firstboot() {
-    crypt_keyid="$(keyctl id %user:cryptenroll)"
-    [ -n "$crypt_keyid" ] || return 0
     [ -e /usr/bin/systemd-cryptenroll ] || return 0
+    detect_luks2 || return 0
 
     local has_fido2=${JEOS_HAS_FIDO2:-}
     local has_tpm2=
@@ -100,22 +117,16 @@ update_crypttab_options() {
 }
 
 enroll_post() {
-    [ -n "$crypt_keyid" ] || return 0
     [ -e /usr/bin/systemd-cryptenroll ] || return 0
+    detect_luks2 || return 0
 
     local dev
     local fstype
-    if [ -z "$crypt_devs" ]; then
-	    while read -r dev fstype; do
-		[ "$fstype" = 'crypto_LUKS' ] || continue
-		crypt_devs+=("$dev")
-	    done < <(lsblk --noheadings -o PATH,FSTYPE)
-    fi
 
     crypttab_options="x-initrd.attach"
 
     if [ "$with_fido2" = '1' ]; then
-	for dev in "${crypt_devs[@]}"; do
+	for dev in "${luks2_devices[@]}"; do
 	    enroll_fido2 "$dev"
 	done
 	crypttab_options+=",fido2-device=auto"
@@ -124,7 +135,7 @@ enroll_post() {
     if [ "$with_tpm2" = '1' ]; then
 	generate_key
 	
-	for dev in "${crypt_devs[@]}"; do
+	for dev in "${luks2_devices[@]}"; do
 	    enroll_tpm2 "$dev"
 	done
 	crypttab_options+=",tpm2-device=auto"
