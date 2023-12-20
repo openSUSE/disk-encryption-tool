@@ -61,7 +61,7 @@ enroll_fido2() {
     run systemd-cryptenroll --fido2-device=auto "$dev"
 }
 
-generate_key() {
+generate_rsa_key() {
     [ -z "$dry" ] && mkdir -p /etc/systemd
     run pcr-oracle \
 	--rsa-generate-key \
@@ -133,7 +133,7 @@ enroll_post() {
     fi
 
     if [ "$with_tpm2" = '1' ]; then
-	generate_key
+	generate_rsa_key
 	
 	for dev in "${luks2_devices[@]}"; do
 	    enroll_tpm2 "$dev"
