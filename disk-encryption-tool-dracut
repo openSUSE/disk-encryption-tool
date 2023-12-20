@@ -1,17 +1,23 @@
 #!/bin/sh
+
 exec < /dev/console >/dev/console 2>&1
 type getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
-script=/dev/shm/combustion/config/script
-if [ -e "$script" ]; then
-	echo "combustion found, no encryption"
+
+# XXX: this is so dirty
+systemctl start sysroot.mount
+mount --target-prefix /sysroot --fstab /sysroot/etc/fstab /var
+if [ ! -e /sysroot/var/lib/YaST2/reconfig_system ]; then
+	echo "system already configured, no encryption"
+	umount /sysroot/var
 	exit 0
 fi
-if getargbool 0 rd.encrypt || [ ! -e /sysroot/etc/machine-id ]; then
-	systemctl start sysroot.mount
-	# silence systemd
-	kill -SIGRTMIN+21 1
-	echo -ne '\n\n\a'
-	read -n1 -s -r -t 10 -p "*** Press ESC to prevent encrypting the disk" inhibitor
-	echo
-	[ "$inhibitor" = $'\e' ] || /usr/bin/disk-encryption-tool -v --gen-key || die "Encryption failed"
+umount /sysroot/var
+
+# silence systemd
+kill -SIGRTMIN+21 1
+echo -ne '\n\n\a'
+read -n1 -s -r -t 10 -p "*** Press ESC to prevent encrypting the disk" inhibitor
+echo
+if [ "$inhibitor" != $'\e' ]; then
+	/usr/bin/disk-encryption-tool -v --gen-key || die "Encryption failed"
 fi
