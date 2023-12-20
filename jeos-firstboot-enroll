@@ -13,6 +13,33 @@ enroll_systemd_firstboot() {
     [ -n "$crypt_keyid" ] || return 0
     [ -e /usr/bin/systemd-cryptenroll ] || return 0
 
+    local dev
+    while read -r dev fstype; do
+	[ "$fstype" = 'crypto_LUKS' ] || continue
+	crypt_devs+=("$dev")
+    done < <(lsblk --noheadings -o PATH,FSTYPE)
+    if [ -z "${crypt_devs[0]}" ]; then
+	d --msgbox $"Error: recovery set but no encrypted disks found" 0 0
+	unset crypt_keyid
+	return 0
+    fi
+
+    if [ -n "$password" ] && dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Use root password as encryption password?" 0 0; then
+	crypt_pw="$password"
+    else
+	while true; do
+	    d --insecure --passwordbox  $"Enter encryption password" 0 0
+	    if [ -z "$result" ]; then
+		d --aspect 29 --msgbox $"No encryption password set. You can add more keys manually using cryptsetup." 0 0
+		break
+	    fi
+	    crypt_pw="$result"
+	    d --insecure --passwordbox  $"Confirm encryption password" 0 0
+	    [ "$crypt_pw" != "$result" ] || break
+	    d --msgbox $"Passwords don't match. Try again" 0 0
+	done
+    fi
+
     local has_fido2=${JEOS_HAS_FIDO2:-}
     local has_tpm2=
 
@@ -74,7 +101,7 @@ enroll_tpm2() {
 update_crypttab_options() {
     # This version will share the same options for all crypto_LUKS
     # devices.  This imply that all of them will be unlocked by the
-    # same TPM2, or the same FIDO2 key
+    # same password, TPM2, or FIDO2 key
     local options="$1"
 
     # TODO: this needs to be unified with disk-encryption-tool
@@ -103,14 +130,26 @@ enroll_post() {
     [ -n "$crypt_keyid" ] || return 0
     [ -e /usr/bin/systemd-cryptenroll ] || return 0
 
-    local dev
-    local fstype
-    if [ -z "$crypt_devs" ]; then
-	    while read -r dev fstype; do
-		[ "$fstype" = 'crypto_LUKS' ] || continue
-		crypt_devs+=("$dev")
-	    done < <(lsblk --noheadings -o PATH,FSTYPE)
+    if [ -e '/usr/sbin/issue-generator' ] && [ -z "$dry" ]; then
+	mkdir -p "/run/issue.d/"
+	issuefile="/run/issue.d/90-diskencrypt.conf"
+    else
+	issuefile='/dev/stdout'
     fi
+
+    if [ -n "$crypt_pw" ]; then
+	local dev
+	export NEWPASSWORD="$password"
+	for dev in "${crypt_devs[@]}"; do
+	    echo "replacing initial password on $dev"
+	    run systemd-cryptenroll --wipe-slot=password --password "$dev"
+	done
+	unset NEWPASSWORD
+	read -r crypt_keyid < <(echo -n "$password" | keyctl padd user cryptenroll @u)
+    fi
+
+    echo -ne "Encryption recovery key:\n  " > "$issuefile"
+    run systemd-cryptenroll --recovery-key "$dev" >> "$issuefile"
 
     crypttab_options="x-initrd.attach"
 
@@ -133,4 +172,7 @@ enroll_post() {
     update_crypttab_options "$crypttab_options"
 
     run sdbootutil add-all-kernels --no-reuse-initrd
+
+    run issue-generator
+    [ -n "$dry" ] || cat "$issuefile"
 }
