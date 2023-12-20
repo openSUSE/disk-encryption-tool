@@ -224,6 +224,11 @@ make_ro()
 	btrfs prop set -t s "$mp" ro true
 }
 
+generate_master_key()
+{
+	tr -dc A-Za-z0-9 </dev/urandom | head -c 64
+}
+
 ####### main #######
 
 getopttmp=$(getopt -o hv --long help,verbose,prime,partno:,gen-key -n "${0##*/}" -- "$@")
@@ -303,7 +308,7 @@ if [ -n "$prime" ]; then
 	dst="$tmpdir/overlay/95disk-encryption-tool"
 	mkdir -p "$dst"
 	for i in disk-encryption-tool disk-encryption-tool-dracut module-setup.sh \
-			disk-encryption-tool-dracut.service generate-recovery-key; do
+			disk-encryption-tool-dracut.service; do
 		cp "${0%/*}/$i" "$dst/$i"
 	done
 	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
@@ -356,8 +361,7 @@ echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -q -N "$partno" "$blkdev"
 udevadm settle
 
 if [ -n "$gen_key" ]; then
-	read -r password < <(generate-recovery-key)
-	echo -e "Recovery key: \e[1m$password\e[m"
+	password="$(generate_master_key)"
 	if [ -e /etc/initrd-release ]; then
 		read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
 	fi

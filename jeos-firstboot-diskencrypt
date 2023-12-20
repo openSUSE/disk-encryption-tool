@@ -44,22 +44,20 @@ diskencrypt_post() {
 		issuefile='/dev/stdout'
 	fi
 
-	echo -ne "Encryption recovery key:\n  " > "$issuefile"
-	keyctl pipe "$crypt_keyid" >> "$issuefile"
-	echo -e "\n" >> "$issuefile"
-	if [ -x /usr/bin/qrencode ]; then
-		echo "You can also scan it with your mobile phone:" >> "$issuefile"
-		keyctl pipe "$crypt_keyid" | qrencode -t utf8i >> "$issuefile"
+	if [ -n "$crypt_pw" ]; then
+		local dev
+		export NEWPASSWORD="$password"
+		for dev in "${crypt_devs[@]}"; do
+			echo "replacing initial password on $dev"
+			run systemd-cryptenroll --wipe-slot=password --password "$dev"
+		done
+		unset NEWPASSWORD
+		read -r crypt_keyid < <(echo -n "$password" | keyctl padd user cryptenroll @u)
 	fi
+
+	echo -ne "Encryption recovery key:\n  " > "$issuefile"
+	run systemd-cryptenroll --recovery-key "$dev" >> "$issuefile"
 
 	run issue-generator
 	[ -n "$dry" ] || cat "$issuefile"
-
-	if [ -n "$crypt_pw" ]; then
-		local dev
-		for dev in "${crypt_devs[@]}"; do
-			echo "adding password to $dev"
-			echo -n "$password" | run cryptsetup luksAddKey --verbose --batch-mode --force-password --key-file <(keyctl pipe "$crypt_keyid") "$dev"
-		done
-	fi
 }
