@@ -7,12 +7,7 @@ DefaultDependencies=false
 Requires=initrd-root-device.target
 After=initrd-root-device.target
 
-# we want to run after combustion copied the config but before combustion
-# itself runs
-Requires=combustion.service
-After=firstboot-detect.service
-After=combustion-prepare.service
-Before=combustion.service
+After=combustion.service
 
 # After ignition completed its stuff
 After=ignition-complete.target
