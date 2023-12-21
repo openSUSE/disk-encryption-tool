@@ -59,7 +59,7 @@ diskencrypt_post() {
 		local dev
 		for dev in "${crypt_devs[@]}"; do
 			echo "adding password to $dev"
-			echo -n "$password" | run cryptsetup luksAddKey --verbose --batch-mode --force-password --key-file <(keyctl pipe "$crypt_keyid") "$dev"
+			echo -n "$crypt_pw" | run cryptsetup luksAddKey --verbose --batch-mode --force-password --key-file <(keyctl pipe "$crypt_keyid") "$dev"
 		done
 	fi
 }
