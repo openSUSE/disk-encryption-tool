@@ -18,17 +18,17 @@ diskencrypt_systemd_firstboot() {
 		return 0
 	fi
 
-	if [ -n "$password" ] && dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Use root password as encryption password?" 0 0; then
+	if [ -n "$password" ] && dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Use root password for disk encryption?" 0 0; then
 		crypt_pw="$password"
 	else
 		while true; do
-			d --insecure --passwordbox  $"Enter encryption password" 0 0
+			d --insecure --passwordbox $"Enter password for disk encryption" 0 0
 			if [ -z "$result" ]; then
-				d --aspect 29 --msgbox $"No encryption password set. You can add more keys manually using cryptsetup." 0 0
+				d --aspect 29 --msgbox $"No password set for disk encryption. You can add more keys manually using cryptsetup." 0 0
 				break
 			fi
 			crypt_pw="$result"
-			d --insecure --passwordbox  $"Confirm encryption password" 0 0
+			d --insecure --passwordbox $"Confirm encryption password" 0 0
 			[ "$crypt_pw" != "$result" ] || break
 			d --msgbox $"Passwords don't match. Try again" 0 0
 		done
@@ -37,23 +37,19 @@ diskencrypt_systemd_firstboot() {
 
 diskencrypt_post() {
 	[ -n "$crypt_keyid" ] || return 0
-	if [ -e '/usr/sbin/issue-generator' ] && [ -z "$dry" ]; then
-		mkdir -p "/run/issue.d/"
-		issuefile="/run/issue.d/90-diskencrypt.conf"
-	else
-		issuefile='/dev/stdout'
-	fi
 
-	echo -ne "Encryption recovery key:\n  " > "$issuefile"
-	keyctl pipe "$crypt_keyid" >> "$issuefile"
-	echo -e "\n" >> "$issuefile"
+	recoverymsgfile=$(mktemp)
+	echo -ne "You can use this recovery key for disk unlocking:\n  " > "$recoverymsgfile"
+	keyctl pipe "$crypt_keyid" >> "$recoverymsgfile"
+	echo -e "\n" >> recoverymsgfile
+	height=5
 	if [ -x /usr/bin/qrencode ]; then
-		echo "You can also scan it with your mobile phone:" >> "$issuefile"
-		keyctl pipe "$crypt_keyid" | qrencode -t utf8i >> "$issuefile"
+		echo "You can also scan it with your mobile phone:" >> "$recoverymsgfile"
+		keyctl pipe "$crypt_keyid" | qrencode -t utf8i >> "$recoverymsgfile"
+		height=70
 	fi
 
-	run issue-generator
-	[ -n "$dry" ] || cat "$issuefile"
+	d --title "Disk Encryption Recovery Key" --textbox "$recoverymsgfile" 25 $height
 
 	if [ -n "$crypt_pw" ]; then
 		local dev
