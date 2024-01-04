@@ -21,3 +21,5 @@ echo
 if [ "$inhibitor" != $'\e' ]; then
 	/usr/bin/disk-encryption-tool -v --gen-key || die "Encryption failed"
 fi
+# turn messages on again
+kill -SIGRTMIN+20 1
