@@ -3,6 +3,11 @@
 exec < /dev/console >/dev/console 2>&1
 type getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
 
+# check whether encryption was explicitly turned off
+if ! getargbool 1 rd.encrypt; then
+	exit 0
+fi
+
 # XXX: this is so dirty
 systemctl start sysroot.mount
 mount --target-prefix /sysroot --fstab /sysroot/etc/fstab /var
