@@ -438,7 +438,8 @@ else
 	grep LOADER_TYPE "$mp"/etc/sysconfig/bootloader
 fi
 
-call_dracut
+# A new initrd is created as side effect of the enrolment
+# (jeos-firtboot module), as this calls sdbootutil
 
 make_ro
 
