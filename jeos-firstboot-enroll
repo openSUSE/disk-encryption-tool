@@ -5,13 +5,14 @@ with_tpm2=
 
 declare -a luks2_devices
 
-# After the enrolling, other tools can find this list in the LUKS
-# header
-pcrs="0,2,4,7,9"
+# After the enrolling, other tools can find this list in
+# /etc/sysconfig/fde-tools
+FDE_SEAL_PCR_LIST="0,2,4,7,9"
+
 
 have_luks2()
 {
-       [ "${#luks2_devices[@]}" -gt 0 ]
+    [ "${#luks2_devices[@]}" -gt 0 ]
 }
 
 detect_luks2()
@@ -61,7 +62,7 @@ enroll_fido2() {
     run systemd-cryptenroll --fido2-device=auto "$dev"
 }
 
-generate_key() {
+generate_rsa_key() {
     [ -z "$dry" ] && mkdir -p /etc/systemd
     run pcr-oracle \
 	--rsa-generate-key \
@@ -70,10 +71,10 @@ generate_key() {
 	store-public-key
 }
 
-enroll_tpm2() {
+enroll_tpm2_pcr_oracle() {
     local dev="$1"
 
-    echo "Enrolling with TPM2: $dev"
+    echo "Enrolling with TPM2 (pcr-oracle): $dev"
 
     # The password is read from "cryptenroll" kernel keyring
     # XXX: Wipe is separated by now (possible systemd bug)
@@ -85,6 +86,24 @@ enroll_tpm2() {
 	--tpm2-device=auto \
 	--tpm2-public-key=/etc/systemd/tpm2-pcr-public-key.pem \
 	--tpm2-public-key-pcrs="$pcrs" \
+	"$dev"
+}
+
+enroll_tpm2_pcrlock() {
+    local dev="$1"
+
+    echo "Enrolling with TPM2 (pcrlock): $dev"
+
+    # The password is read from "cryptenroll" kernel keyring
+    # XXX: Wipe is separated by now (possible systemd bug)
+    run systemd-cryptenroll \
+	--wipe-slot=tpm2 \
+	"$dev"
+
+    # Note that the PCRs are now not stored in the LUKS2 header
+    run systemd-cryptenroll \
+	--tpm2-device=auto \
+	--tpm2-pcrlock=/var/lib/systemd/pcrlock.json \
 	"$dev"
 }
 
@@ -116,32 +135,57 @@ update_crypttab_options() {
     run chmod 644 /etc/crypttab
 }
 
+is_pcrlock() {
+    [ -e /usr/lib/systemd/systemd-pcrlock ]
+}
+
+is_pcr_oracle() {
+    [ -e /etc/systemd/tpm2-pcr-public-key.pem ] && \
+	[ -e /etc/systemd/tpm2-pcr-private-key.pem ] && \
+	[ -e /usr/bin/pcr-oracle ]
+}
+
 enroll_post() {
     [ -e /usr/bin/systemd-cryptenroll ] || return 0
     detect_luks2 || return 0
+
+    # For now is a first step before moving into fde-tools
+    if [ -e /etc/sysconfig/fde-tools ]; then
+	. /etc/sysconfig/fde-tools
+    else
+	echo "FDE_SEAL_PCR_LIST=${FDE_SEAL_PCR_LIST}" > /etc/sysconfig/fde-tools
+    fi
 
     local dev
     local fstype
 
     crypttab_options="x-initrd.attach"
 
+    # Generate first the crypttab + initrd, so the predictions can be
+    # done in case of pcrlock
+    if [ "$with_fido2" = '1' ]; then
+	crypttab_options+=",fido2-device=auto"
+    elif [ "$with_tpm2" = '1' ]; then
+	crypttab_options+=",tpm2-device=auto"
+    fi
+    update_crypttab_options "$crypttab_options"
+
+    # sdbootutil will generate predictions
+    SDB_ADD_INITIAL_CMDLINE=1 run sdbootutil add-all-kernels --no-reuse-initrd
+
     if [ "$with_fido2" = '1' ]; then
 	for dev in "${luks2_devices[@]}"; do
 	    enroll_fido2 "$dev"
 	done
-	crypttab_options+=",fido2-device=auto"
-    fi
-
-    if [ "$with_tpm2" = '1' ]; then
-	generate_key
+    elif [ "$with_tpm2" = '1' ]; then
+	is_pcr_oracle && generate_rsa_key
 	
 	for dev in "${luks2_devices[@]}"; do
-	    enroll_tpm2 "$dev"
+	    if is_pcrlock; then
+		enroll_tpm2_pcrlock "$dev"
+	    elif is_pcr_oracle; then
+		enroll_tpm2_pcr_oracle "$dev"
+	    fi
 	done
-	crypttab_options+=",tpm2-device=auto"
     fi
-
-    update_crypttab_options "$crypttab_options"
-
-    run sdbootutil add-all-kernels --no-reuse-initrd
 }
