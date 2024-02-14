@@ -2,6 +2,7 @@
 
 with_fido2=
 with_tpm2=
+with_tpm2_pin=
 
 declare -a luks2_devices
 
@@ -43,10 +44,10 @@ enroll_systemd_firstboot() {
 	fi
     fi
 
-   # For now seems that if a FIDO2 key is enrolled, it will take
-   # precedence over the TPM2 and the key will be asked to be present
-   # in subsequent boots.
-   if [ "$has_fido2" = '1' ] && [ -n "$has_tpm2" ]; then
+    # For now seems that if a FIDO2 key is enrolled, it will take
+    # precedence over the TPM2 and the key will be asked to be present
+    # in subsequent boots.
+    if [ "$has_fido2" = '1' ] && [ -n "$has_tpm2" ]; then
 	local list=('FIDO2' 'FIDO2' 'TPM2' 'TPM2' 'none' $"Skip")
 	d --no-tags --default-item 'FIDO2' --menu $"Select unlock device" 0 0 "$(menuheight ${#list[@]})" "${list[@]}"
 	[ "$result" = 'FIDO2' ] && with_fido2=1
@@ -54,7 +55,19 @@ enroll_systemd_firstboot() {
     elif [ "$has_fido2" ]; then
 	dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Unlock encrypted disk via FIDO2 token?" 0 0 && with_fido2=1
     elif [ -n "$has_tpm2" ]; then
-	dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Unlock encrypted disk via TPM?" 0 0 && with_tpm2="$has_tpm2"
+	if [ -n "$crypt_pw" ]; then
+	    dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Unlock encrypted disk via TPM2 using the registered password as PIN?" 0 0 && with_tpm2="$has_tpm2" && with_tpm2_pin=1
+	    # Ideally here we could register the password in the
+	    # kernel keyring for "tpm2-pin", the label used in
+	    # systemd.  But in systemd, passwords asked two times (for
+	    # confirmation) are not cached, so they are not read for
+	    # the keyring.  We are forced to use "NEWPIN=" environment
+	    # variable.
+	fi
+
+	if [ -z "$with_tpm2_pin" ]; then
+	    dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Unlock encrypted disk via TPM2?" 0 0 && with_tpm2="$has_tpm2"
+	fi
     fi
     return 0
 }
@@ -88,10 +101,16 @@ enroll_tpm2_pcr_oracle() {
 	--wipe-slot=tpm2 \
 	"$dev"
 
-    run systemd-cryptenroll \
+    local extra_params=""
+    if [ "$with_tpm2_pin" = "1" ]; then
+	extra_params="--tpm2-with-pin=yes"
+    fi
+
+    NEWPIN="$crypt_pw" run systemd-cryptenroll \
 	--tpm2-device=auto \
 	--tpm2-public-key=/etc/systemd/tpm2-pcr-public-key.pem \
 	--tpm2-public-key-pcrs="$FDE_SEAL_PCR_LIST" \
+	${extra_params} \
 	"$dev"
 }
 
@@ -106,10 +125,16 @@ enroll_tpm2_pcrlock() {
 	--wipe-slot=tpm2 \
 	"$dev"
 
+    local extra_params=""
+    if [ "$with_tpm2_pin" = "1" ]; then
+	extra_params="--tpm2-with-pin=yes"
+    fi
+
     # Note that the PCRs are now not stored in the LUKS2 header
-    run systemd-cryptenroll \
+    NEWPIN="$crypt_pw" run systemd-cryptenroll \
 	--tpm2-device=auto \
 	--tpm2-pcrlock=/var/lib/systemd/pcrlock.json \
+	${extra_params} \
 	"$dev"
 }
 
