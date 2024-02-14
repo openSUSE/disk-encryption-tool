@@ -283,10 +283,13 @@ enroll_tpm_and_fido() {
 
 	if [ "$with_tpm2" = 'oracle' ]; then
 		generate_rsa_key
-	else
-		# sdbootutil will generate predictions for pcrlock
-		SDB_ADD_INITIAL_CMDLINE=1 run sdbootutil add-all-kernels --no-reuse-initrd
 	fi
+
+	# If we are using pcrlock, we need to generate predictions
+	# early.  Because pcr-oracle should take the PCRs values from
+	# the configuration file (instead of the LUKS2 header), this
+	# should work
+	SDB_ADD_INITIAL_CMDLINE=1 run sdbootutil add-all-kernels --no-reuse-initrd
 
 	if [ "$with_fido2" = '1' ]; then
 		for dev in "${luks2_devices[@]}"; do
@@ -305,11 +308,6 @@ enroll_tpm_and_fido() {
 				enroll_tpm2_pcr_oracle "$dev"
 			fi
 		done
-	fi
-
-	if [ "$with_tpm2" = 'oracle' ]; then
-		# with pcr-oracle we pick up settings from the luks header
-		run sdbootutil add-all-kernels --no-reuse-initrd
 	fi
 }
 
