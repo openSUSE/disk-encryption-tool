@@ -1,5 +1,8 @@
 #!/bin/bash
 
+crypt_keyid=""
+crypt_pw=""
+
 with_fido2=
 with_tpm2=
 
@@ -29,7 +32,14 @@ detect_luks2()
 
 enroll_systemd_firstboot() {
 	[ -e /usr/bin/systemd-cryptenroll ] || return 0
-	detect_luks2 || return 0
+	crypt_keyid="$(keyctl id %user:cryptenroll)"
+	[ -n "$crypt_keyid" ] || return 0
+
+	if ! detect_luks2; then
+		d --msgbox $"Error: No LUKS2 devices found" 0 0
+		unset crypt_keyid
+		return 0
+	fi
 
 	local has_fido2=${JEOS_HAS_FIDO2:-}
 	local has_tpm2=
@@ -52,10 +62,32 @@ enroll_systemd_firstboot() {
 		[ "$result" = 'FIDO2' ] && with_fido2=1
 		[ "$result" = 'TPM2' ] && with_tpm2="$has_tpm2"
 	elif [ "$has_fido2" ]; then
-		dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Unlock encrypted disk via FIDO2 token?" 0 0 && with_fido2=1
+		d_styled --yesno $"Unlock encrypted disk via FIDO2 token?" 0 0 && with_fido2=1
 	elif [ -n "$has_tpm2" ]; then
-		dialog $dialog_alternate_screen --backtitle "$PRETTY_NAME" --yesno $"Unlock encrypted disk via TPM?" 0 0 && with_tpm2="$has_tpm2"
+		d_styled --yesno $"Unlock encrypted disk via TPM?" 0 0 && with_tpm2="$has_tpm2"
 	fi
+
+	if [ -n "$with_fido2" ] || [ -n "$with_tpm2" ]; then
+		d_styled --yesno $"Add additional encryption password?" 0 0 || return 0
+	fi
+
+	msg=$"Use root password as encryption password?"
+	if [ -n "$password" ] && d_styled --yesno "$msg" 0 0; then
+		crypt_pw="$password"
+	else
+		while true; do
+			d --insecure --passwordbox  $"Enter encryption password" 0 0
+			if [ -z "$result" ]; then
+				d --aspect 29 --msgbox $"No encryption password set. You can add more keys manually using cryptsetup." 0 0
+				break
+			fi
+			crypt_pw="$result"
+			d --insecure --passwordbox  $"Confirm encryption password" 0 0
+			[ "$crypt_pw" != "$result" ] || break
+			d --msgbox $"Passwords don't match. Try again" 0 0
+		done
+	fi
+
 	return 0
 }
 
@@ -155,21 +187,61 @@ is_pcr_oracle() {
 		[ -e /etc/systemd/tpm2-pcr-private-key.pem ]
 }
 
+write_issue_file() {
+	if [ -e '/usr/sbin/issue-generator' ] && [ -z "$dry" ]; then
+		mkdir -p "/run/issue.d/"
+		issuefile="/run/issue.d/90-diskencrypt.conf"
+	else
+		issuefile='/dev/stdout'
+	fi
+
+	echo -ne "Encryption recovery key:\n  " > "$issuefile"
+	keyctl pipe "$crypt_keyid" >> "$issuefile"
+	echo -e "\n" >> "$issuefile"
+	if [ -x /usr/bin/qrencode ]; then
+		echo "You can also scan it with your mobile phone:" >> "$issuefile"
+		keyctl pipe "$crypt_keyid" | qrencode -t utf8i >> "$issuefile"
+	fi
+
+	run issue-generator
+	[ -n "$dry" ] || cat "$issuefile"
+}
+
+add_password() {
+	[ -n "$crypt_pw" ] || return 0
+	local dev
+	for dev in "${luks2_devices[@]}"; do
+		echo "adding password to $dev"
+		echo -n "$crypt_pw" | run cryptsetup luksAddKey --verbose --batch-mode --force-password --key-file <(keyctl pipe "$crypt_keyid") "$dev"
+	done
+}
+
 enroll_post() {
 	[ -e /usr/bin/systemd-cryptenroll ] || return 0
+	[ -n "$crypt_keyid" ] || return 0
 	detect_luks2 || return 0
 
+	write_issue_file
+
+	add_password
+
+	enroll_tpm_and_fido
+}
+
+enroll_tpm_and_fido() {
 	# For now is a first step before moving into fde-tools
-	if [ -e /etc/sysconfig/fde-tools ]; then
-		. /etc/sysconfig/fde-tools
+	local fde_cfg='/etc/sysconfig/fde-tools'
+	if [ -e "$fde_cfg" ]; then
+		. "$fde_cfg"
 	else
-		echo "FDE_SEAL_PCR_LIST=${FDE_SEAL_PCR_LIST}" > /etc/sysconfig/fde-tools
+		[ -z "$dry" ] || fde_cfg=/dev/stdout
+		echo "FDE_SEAL_PCR_LIST=${FDE_SEAL_PCR_LIST}" > "$fde_cfg"
 	fi
 
 	local dev
 	local fstype
 
-	crypttab_options="x-initrd.attach"
+	local crypttab_options="x-initrd.attach"
 
 	# Generate first the crypttab + initrd, so the predictions can be
 	# done in case of pcrlock

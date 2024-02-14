@@ -318,7 +318,7 @@ if [ -n "$prime" ]; then
 	# dirty
 	if [ -d "$mp/usr/share/jeos-firstboot/modules" ]; then
 		install -D -m 644 "${0%/*}/jeos-firstboot-diskencrypt-override.conf" "$mp/usr/lib/systemd/system/jeos-firstboot.service.d/jeos-firstboot-diskencrypt-override.conf"
-		cp "${0%/*}/jeos-firstboot-diskencrypt" "$mp/usr/share/jeos-firstboot/modules/diskencrypt"
+		cp "${0%/*}/jeos-firstboot-enroll" "$mp/usr/share/jeos-firstboot/modules/enroll"
 	fi
 
 	mount -t overlay overlay \
