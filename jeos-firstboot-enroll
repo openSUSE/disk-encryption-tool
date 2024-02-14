@@ -182,10 +182,10 @@ enroll_post() {
 
     if [ "$with_tpm2" = 'oracle' ]; then
 	generate_rsa_key
-    else
-	# sdbootutil will generate predictions for pcrlock
-	SDB_ADD_INITIAL_CMDLINE=1 run sdbootutil add-all-kernels --no-reuse-initrd
     fi
+
+    # sdbootutil will generate predictions for pcrlock
+    SDB_ADD_INITIAL_CMDLINE=1 run sdbootutil add-all-kernels --no-reuse-initrd
 
     if [ "$with_fido2" = '1' ]; then
 	for dev in "${luks2_devices[@]}"; do
@@ -199,10 +199,5 @@ enroll_post() {
 		enroll_tpm2_pcr_oracle "$dev"
 	    fi
 	done
-    fi
-
-    if [ "$with_tpm2" = 'oracle' ]; then
-	# with pcr-oracle we pick up settings from the luks header
-	run sdbootutil add-all-kernels --no-reuse-initrd
     fi
 }
