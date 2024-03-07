@@ -278,3 +278,22 @@ enroll_tpm_and_fido() {
 		run sdbootutil add-all-kernels --no-reuse-initrd
 	fi
 }
+
+enroll_jeos_config_probe() {
+	detect_luks2
+}
+
+enroll_jeos_config() {
+	detect_luks2 || return 0
+
+	is_jeos_config=1
+	d --insecure --passwordbox  $"Enter decryption password" 0 0
+	[ -n "$result" ] || return 0
+	echo -n "$result" | keyctl padd user cryptenroll @u
+
+	enroll_systemd_firstboot
+
+	add_password
+
+	enroll_tpm_and_fido
+}
