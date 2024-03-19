@@ -13,7 +13,13 @@ declare -a luks2_devices
 
 # After the enrolling, other tools can find this list in
 # /etc/sysconfig/fde-tools
-FDE_SEAL_PCR_LIST="0,2,4,7,9"
+if [ $(sdbootutil bootloader) = "systemd-boot" ]; then
+	FDE_SEAL_PCR_LIST="0,2,4,7,9"
+elif [ $(sdbootutil bootloader) = "grub2" ]; then
+	FDE_SEAL_PCR_LIST="0,2,4,7,8,9"
+else
+	d --msgbox "Error: Bootloader not detected" 0 0
+fi
 
 
 have_luks2()
