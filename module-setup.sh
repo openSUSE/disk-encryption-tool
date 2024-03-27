@@ -14,6 +14,7 @@ depends() {
 
 # called by dracut
 install() {
+	instmods dmi_sysfs # for systemd credentials via smbios
 	inst_multiple -o cryptsetup-reencrypt
 	inst_multiple cryptsetup btrfs mktemp getopt mountpoint findmnt sfdisk tac sed hexdump keyctl partx
 

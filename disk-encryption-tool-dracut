@@ -3,6 +3,22 @@
 exec < /dev/console >/dev/console 2>&1
 type getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
 
+# get systemd credential
+# https://systemd.io/CREDENTIALS/
+get_credential()
+{
+	local var="${1:?}"
+	local name="${2:?}"
+	[ -n "$CREDENTIALS_DIRECTORY" ] || return 1
+	[ -e "$CREDENTIALS_DIRECTORY/$name" ] || return 1
+	read -r "$var" < "$CREDENTIALS_DIRECTORY/$name" || [ -n "${!var}" ]
+}
+
+encrypt=
+if get_credential encrypt rd.encrypt && [ "$encrypt" = "no" ]; then
+	exit 0
+fi
+
 # check whether encryption was explicitly turned off
 if ! getargbool 1 rd.encrypt; then
 	exit 0
