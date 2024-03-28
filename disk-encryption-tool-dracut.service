@@ -26,6 +26,7 @@ OnFailureJobMode=isolate
 Type=oneshot
 KeyringMode=shared
 ExecStart=/usr/bin/disk-encryption-tool-dracut
+ImportCredential=rd.encrypt
 
 [Install]
 RequiredBy=firstboot.target
