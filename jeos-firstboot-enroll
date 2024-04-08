@@ -33,12 +33,13 @@ detect_luks2()
 	have_luks2
 }
 
+# exit early without defining any helper functions if there are no luks devices
+detect_luks2 || return 0
+
 enroll_systemd_firstboot() {
 	[ -e /usr/bin/systemd-cryptenroll ] || return 0
 	crypt_keyid="$(keyctl id %user:cryptenroll 2> /dev/null)" || return 0
 	[ -n "$crypt_keyid" ] || return 0
-
-	detect_luks2 || return 0
 
 	welcome_screen_with_console_switch
 
@@ -248,7 +249,6 @@ add_password() {
 enroll_post() {
 	[ -e /usr/bin/systemd-cryptenroll ] || return 0
 	[ -n "$crypt_keyid" ] || return 0
-	detect_luks2 || return 0
 
 	write_issue_file
 
@@ -313,13 +313,7 @@ enroll_tpm_and_fido() {
 	fi
 }
 
-enroll_jeos_config_probe() {
-	detect_luks2
-}
-
 enroll_jeos_config() {
-	detect_luks2 || return 0
-
 	is_jeos_config=1
 	d --insecure --passwordbox  $"Enter decryption password" 0 0
 	[ -n "$result" ] || return 0
