@@ -35,7 +35,7 @@ detect_luks2()
 
 enroll_systemd_firstboot() {
 	[ -e /usr/bin/systemd-cryptenroll ] || return 0
-	crypt_keyid="$(keyctl id %user:cryptenroll)"
+	crypt_keyid="$(keyctl id %user:cryptenroll 2> /dev/null)" || return 0
 	[ -n "$crypt_keyid" ] || return 0
 
 	detect_luks2 || return 0
