@@ -9,7 +9,7 @@ cryptenroll_tpm_extra_args=()
 with_fido2=
 with_tpm2=
 
-declare -a luks2_devices
+luks2_devices=()
 
 # After the enrolling, other tools can find this list in
 # /etc/sysconfig/fde-tools
