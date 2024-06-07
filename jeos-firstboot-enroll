@@ -291,7 +291,7 @@ enroll_tpm_and_fido() {
 		generate_rsa_key
 	else
 		# sdbootutil will generate predictions for pcrlock
-		SDB_ADD_INITIAL_CMDLINE=1 run sdbootutil add-all-kernels --no-reuse-initrd
+		SDB_ADD_INITIAL_COMPONENT=1 run sdbootutil add-all-kernels --no-reuse-initrd
 	fi
 
 	if [ "$with_fido2" = '1' ]; then
