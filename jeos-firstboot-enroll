@@ -11,36 +11,13 @@ with_tpm2=
 
 luks2_devices=()
 
-# After the enrolling, other tools can find this list in
-# /etc/sysconfig/fde-tools
-if [ $(sdbootutil bootloader) = "systemd-boot" ]; then
-	FDE_SEAL_PCR_LIST="0,2,4,7,9"
-elif [ $(sdbootutil bootloader) = "grub2" ]; then
-	FDE_SEAL_PCR_LIST="0,2,4,7,8,9"
-else
-	d --msgbox "Error: Bootloader not detected" 0 0
-fi
 
-
-have_luks2()
-{
-	[ "${#luks2_devices[@]}" -gt 0 ]
-}
-
-detect_luks2()
-{
-	local dev fstype
-	[ -z "$luks2_devices" ] || return 0
-	while read -r dev fstype; do
-		[ "$fstype" = 'crypto_LUKS' ] || continue
-		cryptsetup isLuks --type luks2 "$dev" || continue
-		luks2_devices+=("$dev")
-	done < <(lsblk --noheadings -o PATH,FSTYPE)
-	have_luks2
+have_luks2() {
+	lsblk --noheadings -o PATH,FSTYPE | grep -q crypto_LUKS
 }
 
 # exit early without defining any helper functions if there are no luks devices
-detect_luks2 || return 0
+have_luks2 || return 0
 
 enroll_systemd_firstboot() {
 	[ -e /usr/bin/systemd-cryptenroll ] || return 0
@@ -53,13 +30,7 @@ enroll_systemd_firstboot() {
 	local has_tpm2=
 
 	[ -z "$(systemd-cryptenroll --fido2-device=list 2>/dev/null)" ] || has_fido2=1
-	if [ -e '/sys/class/tpm/tpm0' ]; then
-		if have_pcrlock && ! is_pcr_oracle; then
-			has_tpm2=lock
-		elif have_pcr_oracle; then
-			has_tpm2=oracle
-		fi
-	fi
+	[ ! -e '/sys/class/tpm/tpm0' ] || has_tpm2=lock
 
 	while true; do
 		local list=()
@@ -125,104 +96,6 @@ enroll_systemd_firstboot() {
 	return 0
 }
 
-enroll_fido2() {
-	local dev="$1"
-
-	echo "Enrolling with FIDO2: $dev"
-
-	# The password is read from "cryptenroll" kernel keyring
-	run systemd-cryptenroll --fido2-device=auto "$dev"
-}
-
-generate_rsa_key() {
-	[ -z "$dry" ] && mkdir -p /etc/systemd
-	run pcr-oracle \
-		--rsa-generate-key \
-		--private-key /etc/systemd/tpm2-pcr-private-key.pem \
-		--public-key /etc/systemd/tpm2-pcr-public-key.pem \
-		store-public-key
-}
-
-enroll_tpm2_pcr_oracle() {
-	local dev="$1"
-
-	echo "Enrolling with TPM2 (pcr-oracle): $dev"
-
-	# The password is read from "cryptenroll" kernel keyring
-	# XXX: Wipe is separated by now (possible systemd bug)
-	run systemd-cryptenroll \
-		--wipe-slot=tpm2 \
-		"$dev"
-
-	NEWPIN="$crypt_tpm_pin" run systemd-cryptenroll \
-		--tpm2-device=auto \
-		"${cryptenroll_tpm_extra_args[@]}" \
-		--tpm2-public-key=/etc/systemd/tpm2-pcr-public-key.pem \
-		--tpm2-public-key-pcrs="$FDE_SEAL_PCR_LIST" \
-		"$dev"
-}
-
-enroll_tpm2_pcrlock() {
-	local dev="$1"
-
-	echo "Enrolling with TPM2 (pcrlock): $dev"
-
-	# The password is read from "cryptenroll" kernel keyring
-	# XXX: Wipe is separated by now (possible systemd bug)
-	run systemd-cryptenroll \
-		--wipe-slot=tpm2 \
-		"$dev"
-
-	# Note that the PCRs are now not stored in the LUKS2 header
-	NEWPIN="$crypt_tpm_pin" run systemd-cryptenroll \
-		--tpm2-device=auto \
-		"${cryptenroll_tpm_extra_args[@]}" \
-		--tpm2-pcrlock=/var/lib/systemd/pcrlock.json \
-		"$dev"
-}
-
-update_crypttab_options() {
-	# This version will share the same options for all crypto_LUKS
-	# devices.  This imply that all of them will be unlocked by the
-	# same TPM2, or the same FIDO2 key
-	local options="$1"
-
-	# TODO: this needs to be unified with disk-encryption-tool
-	local crypttab
-	if [ -z "$dry" ]; then
-		crypttab="$(mktemp -t disk-encryption-tool.crypttab.XXXXXX)"
-	else
-		crypttab=/dev/stdout
-	fi
-	echo "# File created by jeos-firstboot-enroll.  Comments will be removed" > "$crypttab"
-
-	local name
-	local device
-	local key
-	local opts
-	while read -r name device key opts; do
-		[[ "$name" = \#* ]] && continue
-		echo "$name $device $key $options" >> "$crypttab"
-	done < /etc/crypttab
-
-	run mv "$crypttab" /etc/crypttab
-	run chmod 644 /etc/crypttab
-}
-
-have_pcrlock() {
-	[ -e /usr/lib/systemd/systemd-pcrlock ]
-}
-
-have_pcr_oracle() {
-	[ -e /usr/bin/pcr-oracle ]
-}
-
-is_pcr_oracle() {
-	have_pcr_oracle && \
-		[ -e /etc/systemd/tpm2-pcr-public-key.pem ] && \
-		[ -e /etc/systemd/tpm2-pcr-private-key.pem ]
-}
-
 write_issue_file() {
 	if [ -e '/usr/sbin/issue-generator' ] && [ -z "$dry" ]; then
 		mkdir -p "/run/issue.d/"
@@ -243,80 +116,26 @@ write_issue_file() {
 	[ -n "$dry" ] || cat "$issuefile"
 }
 
-add_password() {
-	[ -n "$crypt_pw" ] || return 0
-	local dev
-	for dev in "${luks2_devices[@]}"; do
-		echo "adding password to $dev"
-		echo -n "$crypt_pw" | run cryptsetup luksAddKey --verbose --batch-mode --force-password --key-file <(keyctl pipe "$crypt_keyid") "$dev"
-	done
-}
-
 enroll_post() {
 	[ -e /usr/bin/systemd-cryptenroll ] || return 0
 	[ -n "$crypt_keyid" ] || return 0
 
 	write_issue_file
-
-	add_password
-
-	enroll_tpm_and_fido
+	do_enroll
 }
 
-enroll_tpm_and_fido() {
-	# For now is a first step before moving into fde-tools
-	local fde_cfg='/etc/sysconfig/fde-tools'
-	if [ -e "$fde_cfg" ]; then
-		. "$fde_cfg"
-	else
-		[ -z "$dry" ] || fde_cfg=/dev/stdout
-		echo "FDE_SEAL_PCR_LIST=${FDE_SEAL_PCR_LIST}" > "$fde_cfg"
-	fi
+do_enroll() {
+	[ -z "$crypt_pw" ] || PW="$crypt_pw" run sdbootutil enroll --method=password
 
-	local dev
-	local fstype
-
-	local crypttab_options="x-initrd.attach"
-
-	# Generate first the crypttab + initrd, so the predictions can be
-	# done in case of pcrlock
-	if [ "$with_fido2" = '1' ]; then
-		crypttab_options+=",fido2-device=auto"
-	elif [ -n "$with_tpm2" ]; then
-		crypttab_options+=",tpm2-device=auto"
-	fi
-	update_crypttab_options "$crypttab_options"
-
-	if [ "$with_tpm2" = 'oracle' ]; then
-		generate_rsa_key
-	else
-		# sdbootutil will generate predictions for pcrlock
-		SDB_ADD_INITIAL_COMPONENT=1 run sdbootutil add-all-kernels --no-reuse-initrd
-	fi
-
-	if [ "$with_fido2" = '1' ]; then
-		for dev in "${luks2_devices[@]}"; do
-			enroll_fido2 "$dev"
-		done
-	elif [ -n "$with_tpm2" ]; then
+	if [ -n "$with_tpm2" ]; then
 		if [ -n "$crypt_tpm_pin" ]; then
-			# XXX ./src/cryptenroll/cryptenroll-tpm2.c lacks accept cached
-			#echo -n "$crypt_tpm_pin" | run keyctl padd user tpm2-pin @u
-			cryptenroll_tpm_extra_args+=(--tpm2-with-pin=1)
+			PIN="$crypt_tpm_pin" run sdbootutil enroll --method=tpm2+pin
+		else
+			SDB_ADD_INITIAL_COMPONENT=1 run sdbootutil enroll --method=tpm2
 		fi
-		for dev in "${luks2_devices[@]}"; do
-			if [ "$with_tpm2" = 'lock' ]; then
-				enroll_tpm2_pcrlock "$dev"
-			else
-				enroll_tpm2_pcr_oracle "$dev"
-			fi
-		done
 	fi
 
-	if [ "$with_tpm2" = 'oracle' ]; then
-		# with pcr-oracle we pick up settings from the luks header
-		run sdbootutil add-all-kernels --no-reuse-initrd
-	fi
+	[ -z "$with_fido2" ] || run sdbootutil enroll --method=fido2
 }
 
 enroll_jeos_config() {
@@ -326,8 +145,5 @@ enroll_jeos_config() {
 	echo -n "$result" | keyctl padd user cryptenroll @u
 
 	enroll_systemd_firstboot
-
-	add_password
-
-	enroll_tpm_and_fido
+	do_enroll
 }
