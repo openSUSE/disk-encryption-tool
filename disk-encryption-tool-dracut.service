@@ -11,6 +11,7 @@ After=combustion.service
 
 # After ignition completed its stuff
 After=ignition-complete.target
+After=ignition-remove-reconfig_system.service
 
 # So that /etc/fstab's x-initrd.mount entries are read (again) later
 Before=initrd-parse-etc.service
