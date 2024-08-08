@@ -15,7 +15,7 @@ get_credential()
 }
 
 encrypt=
-if get_credential encrypt rd.encrypt && [ "$encrypt" = "no" ]; then
+if get_credential encrypt disk-encryption-tool-dracut.encrypt && [ "$encrypt" = "no" ]; then
 	exit 0
 fi
 
