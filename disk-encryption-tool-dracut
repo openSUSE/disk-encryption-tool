@@ -27,7 +27,7 @@ fi
 # XXX: this is so dirty
 systemctl start sysroot.mount
 mount --target-prefix /sysroot --fstab /sysroot/etc/fstab /var
-if [ ! -e /sysroot/var/lib/YaST2/reconfig_system ]; then
+if [ ! -e /sysroot/var/lib/YaST2/reconfig_system ] && [ "$encrypt" != "force" ]; then
 	echo "system already configured, no encryption"
 	umount /sysroot/var
 	exit 0
@@ -36,9 +36,12 @@ umount /sysroot/var
 
 # silence systemd
 kill -SIGRTMIN+21 1
-echo -ne '\n\n\a'
-read -n1 -s -r -t 10 -p "*** Press ESC to prevent encrypting the disk" inhibitor
-echo
+inhibitor=
+if [ "$encrypt" != "force" ]; then
+	echo -ne '\n\n\a'
+	read -n1 -s -r -t 10 -p "*** Press ESC to prevent encrypting the disk" inhibitor
+	echo
+fi
 if [ "$inhibitor" != $'\e' ]; then
 	/usr/bin/disk-encryption-tool -v --gen-key || die "Encryption failed"
 fi
