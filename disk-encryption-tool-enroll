@@ -1,0 +1,81 @@
+#!/bin/bash
+
+get_credential() {
+	local var="${1:?}"
+	local name="${2:?}"
+	local keyid
+	keyid="$(keyctl id %user:"$name" 2> /dev/null)" || true
+
+	if [ -e "$CREDENTIALS_DIRECTORY/$name" ]; then
+		read -r "$var" < "$CREDENTIALS_DIRECTORY/$name"
+	elif [ -n "$keyid" ]; then
+		read -r "$var" <<< "$(keyctl pipe "$keyid")"
+	fi
+}
+
+have_luks2() {
+	lsblk --noheadings -o PATH,FSTYPE | grep -q crypto_LUKS
+}
+
+write_issue_file() {
+	if [ -e '/usr/sbin/issue-generator' ]; then
+		mkdir -p "/run/issue.d/"
+		issuefile="/run/issue.d/90-diskencrypt.conf"
+	else
+		issuefile='/dev/stdout'
+	fi
+
+	echo -ne "Encryption recovery key:\n  " > "$issuefile"
+	keyctl pipe "$crypt_keyid" >> "$issuefile"
+	echo -e "\n" >> "$issuefile"
+	if [ -x /usr/bin/qrencode ]; then
+		echo "You can also scan it with your mobile phone:" >> "$issuefile"
+		keyctl pipe "$crypt_keyid" | qrencode -t utf8i >> "$issuefile"
+	fi
+
+	issue-generator
+	cat "$issuefile"
+}
+
+
+[ ! -e "/var/lib/YaST2/reconfig_system" ] || exit 0
+have_luks2 || exit 0
+crypt_keyid="$(keyctl id %user:cryptenroll 2> /dev/null)" || exit 0
+[ -n "$crypt_keyid" ] || {
+	echo "Recovery key not registered in the keyring. Aborting" > /dev/stderr
+	exit 1
+}
+
+write_issue_file
+
+# Proceed with the enrollment
+
+pw=
+get_credential pw "disk-encryption-tool-enroll.pw"
+
+tpm2_pin=
+get_credential tpm2_pin "disk-encryption-tool-enroll.tpm2+pin"
+
+tpm2=
+get_credential tpm2 "disk-encryption-tool-enroll.tpm2"
+
+fido2=
+get_credential fido2 "disk-encryption-tool-enroll.fido2"
+
+[ -z "$pw" ] || {
+	echo "Enrolling password"
+	PW="$pw" sdbootutil enroll --method=password
+}
+
+if [ -n "$tpm2_pin" ]; then
+	echo "Enrolling TPM2 with PIN"
+	SDB_ADD_INITIAL_COMPONENT=1 PIN="$crypt_tpm_pin" sdbootutil enroll --method=tpm2+pin
+elif [ -n "$tpm2" ]; then
+	echo "Enrolling TPM2"
+	SDB_ADD_INITIAL_COMPONENT=1 sdbootutil enroll --method=tpm2
+fi
+
+[ -z "$fido2" ] || {
+	echo "Enrolling a FIDO2 key"
+	sdbootutil enroll --method=fido2
+}
