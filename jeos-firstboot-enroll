@@ -129,7 +129,7 @@ do_enroll() {
 
 	if [ -n "$with_tpm2" ]; then
 		if [ -n "$crypt_tpm_pin" ]; then
-			PIN="$crypt_tpm_pin" run sdbootutil enroll --method=tpm2+pin
+			SDB_ADD_INITIAL_COMPONENT=1 PIN="$crypt_tpm_pin" run sdbootutil enroll --method=tpm2+pin
 		else
 			SDB_ADD_INITIAL_COMPONENT=1 run sdbootutil enroll --method=tpm2
 		fi
