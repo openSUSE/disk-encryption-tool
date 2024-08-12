@@ -70,6 +70,18 @@ install -D -m 644 jeos-firstboot-enroll %buildroot/usr/share/jeos-firstboot/modu
 install -m 755 disk-encryption-tool-enroll %buildroot/usr/bin/disk-encryption-tool-enroll
 install -D -m 644 disk-encryption-tool-enroll.service %buildroot/%{_unitdir}/disk-encryption-tool-enroll.service
 
+%preun
+%service_del_preun disk-encryption-tool-enroll.service
+
+%postun
+%service_del_postun disk-encryption-tool-enroll.service
+
+%pre
+%service_add_pre disk-encryption-tool-enroll.service
+
+%post
+%service_add_post disk-encryption-tool-enroll.service
+
 %files
 %license LICENSE
 /usr/bin/disk-encryption-tool
