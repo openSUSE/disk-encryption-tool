@@ -64,7 +64,11 @@ get_credential fido2 "disk-encryption-tool-enroll.fido2"
 
 [ -z "$pw" ] || {
 	echo "Enrolling password"
-	PW="$pw" sdbootutil enroll --method=password
+	extra=
+	if [ -z "$tpm2_pin" ] && [ -z "$tpm2" ] && [ -z "$fido2" ]; then
+		extra="--no-reuse-initrd"
+	fi
+	PW="$pw" sdbootutil enroll --method=password "$extra"
 }
 
 if [ -n "$tpm2_pin" ]; then
