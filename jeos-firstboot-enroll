@@ -125,7 +125,13 @@ enroll_post() {
 }
 
 do_enroll() {
-	[ -z "$crypt_pw" ] || PW="$crypt_pw" run sdbootutil enroll --method=password
+	[ -z "$crypt_pw" ] || {
+		extra=
+		if [ -z "$tpm2_pin" ] && [ -z "$tpm2" ] && [ -z "$fido2" ]; then
+			extra="--no-reuse-initrd"
+		fi
+		PW="$crypt_pw" run sdbootutil enroll --method=password "$extra"
+	}
 
 	if [ -n "$with_tpm2" ]; then
 		if [ -n "$crypt_tpm_pin" ]; then
