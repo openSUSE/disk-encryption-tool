@@ -113,7 +113,6 @@ write_issue_file() {
 	fi
 
 	run issue-generator
-	[ -n "$dry" ] || cat "$issuefile"
 }
 
 enroll_post() {

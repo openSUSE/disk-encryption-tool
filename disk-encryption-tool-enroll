@@ -34,7 +34,6 @@ write_issue_file() {
 	fi
 
 	issue-generator
-	cat "$issuefile"
 }
 
 
