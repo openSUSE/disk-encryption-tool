@@ -126,8 +126,12 @@ enroll_post() {
 
 do_enroll() {
 	[ -z "$crypt_pw" ] || {
+		# Note that if --no-reuse-initrd is used, then a new
+		# initrd will be created and will break the
+		# measurement of the initial components if later the
+		# TPM2 enrollment is called
 		extra=
-		if [ -z "$tpm2_pin" ] && [ -z "$tpm2" ] && [ -z "$fido2" ]; then
+		if [ -z "$with_tpm2" ] && [ -z "$with_fido2" ]; then
 			extra="--no-reuse-initrd"
 		fi
 		PW="$crypt_pw" run sdbootutil enroll --method=password "$extra"
