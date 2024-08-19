@@ -363,6 +363,16 @@ if [ -n "$gen_key" ]; then
 	fi
 fi
 
+# When we create a new partition in Ignition, some services like
+# NetworkManager and systemd-udevd see the new partition or subvolume,
+# making the device mounted and the reencryption fail.
+systemctl --quiet try-restart nm-initrd.service
+restart_systemd_udevd=
+if systemctl --quiet status systemd-udevd.service &> /dev/null; then
+	restart_systemd_udevd=1
+	systemctl --quiet stop systemd-udevd.service
+fi
+
 echo "Encrypting..."
 encrypt "$@"
 
@@ -372,6 +382,10 @@ if [ -e /etc/initrd-release ]; then
 	# seems to be the only way to tell the kernel about a specific partition change
 	partx -u --nr "$partno" "$blkdev" || :
 	cryptsetup resize "$cr_name" <<<"$password"
+fi
+
+if [ -n "$restart_systemd_udevd" ]; then
+	systemctl --quiet start systemd-udevd.service
 fi
 
 if [ -z "$mounted" ]; then
