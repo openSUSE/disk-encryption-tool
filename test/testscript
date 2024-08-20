@@ -1,0 +1,91 @@
+#!/bin/bash
+# combustion: prepare
+set -euxo pipefail
+exec &>/dev/ttyS0
+
+# Poweroff immediately on any failure to avoid unnecessary waiting.
+trap '[ $? -eq 0 ] || poweroff -f' EXIT
+
+if [ "${1-}" = "--prepare" ]; then
+	# We set disk-encryption-tool-dracut.encryption credential to
+	# "force".  This will make disk-encryption-tool-dracut force the
+	# encryption, ignoring that Combusion configured the system, and
+	# will skip the permission countdown
+	#
+	# After the encryption the recovery key is registered in the
+	# kernel keyring %user:cryptenroll
+	mkdir -p /run/credstore
+	echo "force" > /run/credstore/disk-encryption-tool-dracut.encrypt
+	exit 0
+fi
+
+# Create a valid machine-id, as this will be required to create later
+# the host secret
+systemd-machine-id-setup
+
+# We want to persist the host secret key created via systemd-cred
+# (/var/lib/systemd/credential.secret)
+mount /var
+
+mkdir -p /etc/credstore.encrypted
+credential="$(mktemp disk-encryption-tool.XXXXXXXXXX)"
+
+# Enroll extra password
+# echo "SECRET_PASSWORD" > "$credential"
+echo "linux" > "$credential"
+systemd-creds encrypt --name=disk-encryption-tool-enroll.pw "$credential" \
+	      /etc/credstore.encrypted/disk-encryption-tool-enroll.pw
+
+# # Enroll TPM2 with secret PIN
+# echo "SECRET_PIN" > "$credential"
+# systemd-creds encrypt --name=disk-encryption-tool-enroll.tpm2+pin "$credential" \
+# 	      /etc/credstore.encrypted/disk-encryption-tool-enroll.tpm2+pin
+
+# # Enroll TPM2
+# echo "1" > "$credential"
+# systemd-creds encrypt --name=disk-encryption-tool-enroll.tpm2 "$credential" \
+# 	      /etc/credstore.encrypted/disk-encryption-tool-enroll.tpm2
+
+# # Enroll FIDO2
+# echo "1" > "$credential"
+# systemd-creds encrypt --name=disk-encryption-tool-enroll.fido2 "$credential" \
+# 	      /etc/credstore.encrypted/disk-encryption-tool-enroll.fido2
+
+shred -u "$credential"
+
+# Umount back /var to not confuse tukit later
+umount /var
+
+# Keyboard
+systemd-firstboot --force --keymap=es
+
+# Make sure that the system comes up good, leave a marker in the shared FS
+# and power off the VM.
+cat >>/usr/bin/combustion-validate <<'EOF'
+#!/bin/bash
+set -euxo pipefail
+exec &>/dev/ttyS0
+findmnt
+lsblk
+if [ "$(findmnt -nrvo SOURCE)" != "/dev/mapper/cr_root" ]; then
+	echo "Not encrypted?"
+	exit 1
+fi
+trap '[ $? -eq 0 ] || poweroff -f' EXIT
+mount -t 9p -o trans=virtio tmpdir /mnt
+touch /mnt/done
+umount /mnt
+poweroff -f
+EOF
+chmod a+x /usr/bin/combustion-validate
+
+cat >>/etc/systemd/system/combustion-validate.service <<'EOF'
+[Service]
+ExecStart=/usr/bin/combustion-validate
+[Install]
+RequiredBy=default.target
+EOF
+systemctl enable combustion-validate.service
+
+# Leave a marker
+echo "Configured with combustion" > /etc/issue.d/combustion

@@ -1,0 +1,36 @@
+{
+  "ignition": {
+    "version": "3.2.0"
+  },
+  "passwd": {
+    "users": [
+      {
+        "name": "root",
+        "passwordHash": "$2a$10$IGzLVVX6jfMoe4Qoog2v.e24woQJiys9Doe8.taWrqdDkZyrXiGZu"
+      }
+    ]
+  },
+  "storage": {
+    "filesystems": [
+      {
+        "device": "/dev/disk/by-label/ROOT",
+        "format": "btrfs",
+        "mountOptions": [
+          "subvol=/@/home"
+        ],
+        "path": "/home",
+        "wipeFilesystem": false
+      }
+    ],
+    "files": [
+      {
+        "path": "/etc/locale.conf",
+        "mode": 420,
+        "overwrite": true,
+        "contents": {
+          "source": "data:,LANG=en_US.UTF-8"
+        }
+      }
+    ]
+  }
+}
