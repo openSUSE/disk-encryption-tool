@@ -12,7 +12,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y qemu-system-x86
+        sudo apt install -y qemu-system-x86 ovmf
         # Normally setfacl -m u:$USER:rw /dev/kvm should work, but for some
         # reason this only sticks around for a single QEMU run. udev?
         sudo usermod -a -G kvm "$USER"
