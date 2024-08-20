@@ -93,10 +93,11 @@ fi
 rm -f "${tmpdir}/done"
 qemu-img snapshot -a initial openSUSE-MicroOS.x86_64-kvm-and-xen-sdboot.qcow2
 
+rm -rf configdrv
 mkdir -p configdrv/combustion/
 cp testscript configdrv/combustion/script
-#mkdir -p configdrv/ignition/
-#cp config.ign configdrv/ignition/config.ign
+mkdir -p configdrv/ignition/
+cp config.ign configdrv/ignition/config.ign
 /sbin/mkfs.ext4 -F -d configdrv -L ignition combustion.raw 16M
 
 timeout 300 qemu-system-x86_64 "${QEMU_BASEARGS[@]}" -drive if=virtio,file=openSUSE-MicroOS.x86_64-kvm-and-xen-sdboot.qcow2 \
