@@ -32,8 +32,16 @@ QEMU_BASEARGS=(
 	-accel kvm -nographic -m 1024
 	# Reading from stdin doesn't work, configure serial and monitor appropriately.
 	-chardev null,id=serial,logfile=/dev/stdout,logappend=on -serial chardev:serial -monitor none
-	-virtfs "local,path=${tmpdir},mount_tag=tmpdir,security_model=none"
-	-bios /usr/share/qemu/ovmf-x86_64-code.bin)
+	-virtfs "local,path=${tmpdir},mount_tag=tmpdir,security_model=none")
+
+if [ -e /usr/share/qemu/ovmf-x86_64-code.bin ]; then
+	QEMU_BASEARGS+=(-bios /usr/share/qemu/ovmf-x86_64-code.bin)
+elif [ -e /usr/share/qemu/OVMF.fd ]; then
+	QEMU_BASEARGS+=(-bios /usr/share/qemu/OVMF.fd)
+else
+	echo "No OVMF found"
+	exit 1
+fi
 
 # Prepare the temporary dir: Install disk-encryption-tool and copy resources.
 testdir="$(dirname "$0")"

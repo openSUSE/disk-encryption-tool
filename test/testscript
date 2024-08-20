@@ -65,13 +65,13 @@ cat >>/usr/bin/combustion-validate <<'EOF'
 #!/bin/bash
 set -euxo pipefail
 exec &>/dev/ttyS0
+trap '[ $? -eq 0 ] || poweroff -f' EXIT
 findmnt
 lsblk
-if [ "$(findmnt -nrvo SOURCE)" != "/dev/mapper/cr_root" ]; then
+if [ "$(findmnt -nrvo SOURCE /)" != "/dev/mapper/cr_root" ]; then
 	echo "Not encrypted?"
 	exit 1
 fi
-trap '[ $? -eq 0 ] || poweroff -f' EXIT
 mount -t 9p -o trans=virtio tmpdir /mnt
 touch /mnt/done
 umount /mnt
