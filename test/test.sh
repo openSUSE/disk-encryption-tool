@@ -29,7 +29,7 @@ fi
 QEMU_BASEARGS=(
 	# -accel tcg was here after -accel kvm but the fallback hid a weird bug
 	# that in GH actions only the first instance of QEMU was able to access /dev/kvm.
-	-accel kvm -nographic -m 1024
+	-accel kvm -cpu host -nographic -m 1024
 	# Reading from stdin doesn't work, configure serial and monitor appropriately.
 	-chardev null,id=serial,logfile=/dev/stdout,logappend=on -serial chardev:serial -monitor none
 	-virtfs "local,path=${tmpdir},mount_tag=tmpdir,security_model=none")
