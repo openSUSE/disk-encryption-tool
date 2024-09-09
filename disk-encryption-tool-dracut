@@ -14,6 +14,15 @@ get_credential()
 	read -r "$var" < "$CREDENTIALS_DIRECTORY/$name" || [ -n "${!var}" ]
 }
 
+get_credentials()
+{
+	local var="${1:?}"
+	local name="${2:?}"
+	[ -n "$CREDENTIALS_DIRECTORY" ] || return 1
+	[ -e "$CREDENTIALS_DIRECTORY/$name" ] || return 1
+	readarray -t "$var" < "$CREDENTIALS_DIRECTORY/$name" || [ -n "${!var}" ]
+}
+
 encrypt=
 if get_credential encrypt disk-encryption-tool-dracut.encrypt && [ "$encrypt" = "no" ]; then
 	exit 0
@@ -43,7 +52,20 @@ if [ "$encrypt" != "force" ]; then
 	echo
 fi
 if [ "$inhibitor" != $'\e' ]; then
-	/usr/bin/disk-encryption-tool -v --gen-key || die "Encryption failed"
+	root_device="$(findmnt -nvo SOURCE /sysroot)"
+	root_cr_name="cr_root"
+	if get_credentials partitions disk-encryption-tool-dracut.partitions; then
+		for line in "${partitions[@]}"; do
+			read -r cr_name device <<<"$line"
+			[ "$device" = "$root_device" ] && root_cr_name="$cr_name" && continue
+			echo "Encrypt $device"
+			/usr/bin/disk-encryption-tool -v --gen-key --root /sysroot "$device" "$cr_name"|| die "Encryption failed"
+		done
+	fi
+	if [ "$root_cr_root" != "skip" ]; then
+		echo "Encrypt /sysroot"
+		/usr/bin/disk-encryption-tool -v --gen-key "/sysroot" "$root_cr_name" || die "Encryption failed"
+	fi
 fi
 # turn messages on again
 kill -SIGRTMIN+20 1
