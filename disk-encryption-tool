@@ -9,7 +9,6 @@ LANG="C.utf8"
 export LANG
 
 verbose=
-prime=
 gen_key=
 
 switched_rw=
@@ -66,7 +65,6 @@ helpandquit()
 
 		OPTIONS:
 		  --verbose       verbose
-		  --prime         add hook scripts to initrd to encrypt on first boot
 		  --partno=N      partition number (default 3)
 		  --gen-key       generate random recovery key
 		  --root	  root filesystem (when different from device to encrypt)
@@ -172,30 +170,6 @@ encrypt()
 	cr_dev="/dev/mapper/$cr_name"
 }
 
-call_dracut()
-{
-	if [ -L "$mp/boot/initrd" ]; then
-		local initrd kv
-		initrd="$(readlink "$mp/boot/initrd")"
-		kv="${initrd#initrd-}"
-		log_info "create initrd for $kv"
-		chroot "$mp" dracut --add-drivers dm_crypt -q -f "/boot/$initrd" "$kv" "$@"
-	elif [ -e "$mp/etc/kernel/entry-token" ]; then
-		local token kernel kv
-		read -r token < "$mp/etc/kernel/entry-token"
-		log_info "token $token"
-		for initrd in "$mp/boot/efi/$token"/*/initrd-*; do
-			kv="${initrd%/*}"
-			kv="${kv##*/}"
-			initrd="${initrd#"$mp"}"
-			log_info "create $initrd for $kv"
-			hostonly_l=no chroot "$mp" dracut -q --reproducible -f "$initrd" "$kv" "$@"
-		done
-	else
-		err "Unsupported boot loader or fs layout"
-	fi
-}
-
 mountstuff()
 {
 	local mp="${1:-$mp}"
@@ -234,14 +208,13 @@ make_ro()
 
 ####### main #######
 
-getopttmp=$(getopt -o hv --long help,verbose,prime,partno:,gen-key,root: -n "${0##*/}" -- "$@")
+getopttmp=$(getopt -o hv --long help,verbose,partno:,gen-key,root: -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
         case "$1" in
                 -h|--help) helpandquit ;;
 		-v|--verbose) verbose=$((++verbose)); shift ;;
-		--prime) prime="1"; shift ;;
 		--partno) partno="$2"; shift 2;;
 		--gen-key) gen_key="1"; shift;;
 		--root) root_mp="$2"; is_rootfs=; shift 2;;
@@ -256,7 +229,7 @@ done
 
 cr_name="$2"
 
-[ -z "$prime" ] && [ -e "/dev/mapper/$cr_name" ] && err "$cr_name exists. Exit."
+[ -e "/dev/mapper/$cr_name" ] && err "$cr_name exists. Exit."
 
 if [ -d "$1" ] || [ -b "$1" ]; then
 	if [ -b "$1" ]; then
@@ -308,38 +281,6 @@ else
 	mountpoint -q "$mp" || err "$mp is not mounted"
 	findmnt -o SOURCE,TARGET,FSTYPE,OPTIONS -Rvn --pairs "$mp" > "$tmpdir/mounts"
 	mount -o remount,rw "$mp"
-fi
-
-if [ -n "$prime" ]; then
-	mkdir -p "$tmpdir/overlay-w"
-	dst="$tmpdir/overlay/95disk-encryption-tool"
-	mkdir -p "$dst"
-	for i in disk-encryption-tool disk-encryption-tool-dracut module-setup.sh \
-			disk-encryption-tool-dracut.service generate-recovery-key; do
-		cp "${0%/*}/$i" "$dst/$i"
-	done
-	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
-		cp "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" "$dst/encrypt_options"
-		export ENCRYPTION_CONFIG="/usr/lib/dracut/modules.d/95disk-encryption-tool/encrypt_options"
-	fi
-
-	make_rw
-
-	mountstuff
-
-	# dirty
-	if [ -d "$mp/usr/share/jeos-firstboot/modules" ]; then
-		install -D -m 644 "${0%/*}/jeos-firstboot-diskencrypt-override.conf" "$mp/usr/lib/systemd/system/jeos-firstboot.service.d/jeos-firstboot-diskencrypt-override.conf"
-		cp "${0%/*}/jeos-firstboot-enroll" "$mp/usr/share/jeos-firstboot/modules/enroll"
-	fi
-
-	mount -t overlay overlay \
-		-o lowerdir="$mp/usr/lib/dracut/modules.d/,upperdir=$tmpdir/overlay,workdir=$tmpdir/overlay-w" \
-		"$mp/usr/lib/dracut/modules.d/"
-
-	call_dracut
-
-	exit 0
 fi
 
 read -r minsize bytes _rest < <(btrfs inspect-internal min-dev-size "$mp")
