@@ -139,25 +139,13 @@ encrypt()
 			encrypt_options+=("$op")
 		done < "${ENCRYPTION_CONFIG:-/etc/encrypt_options}"
 	fi
-	# sle 15 compat code
-	if type -p cryptsetup-reencrypt &> /dev/null; then
-		read_password
-
-		echo "$password" | cryptsetup-reencrypt --new --type luks1 "${encrypt_options[@]}" "$@" "${blkpart}"
-
-		log_info "Encryption done"
-
-		log_info "open encrypted image"
-		echo "$password" | cryptsetup open "${blkpart}" "$cr_name"
+	log_info "encrypt with options ${encrypt_options[*]}"
+	if [ -n "$password" ]; then
+		# XXX: hopefully we can use the kernel keyring in the future here
+		cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name" <<<"$password"
+		[ -z "$gen_key" ] ||  echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
 	else
-		log_info "encrypt with options ${encrypt_options[*]}"
-		if [ -n "$password" ]; then
-			# XXX: hopefully we can use the kernel keyring in the future here
-			cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name" <<<"$password"
-			[ -z "$gen_key" ] ||  echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
-		else
-			cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
-		fi
+		cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
 	fi
 	cr_dev="/dev/mapper/$cr_name"
 }
