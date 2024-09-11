@@ -10,24 +10,25 @@ export LANG
 
 verbose=
 gen_key=
+root_mp=
 
+is_rootfs=1
 switched_rw=
 cr_name=
 cr_dev=
 blkdev=
 blkpart=
-root_mp=
-is_rootfs=1
 mp=
 mounted=
+
 tmpdir=$(mktemp -d -t disk-encryption-tool.XXXXXX)
+
 cleanup()
 {
 	set +e
 	if [ -n "$mp" ]; then
 		while read -r i; do
-			# TODO: this should be root_mp?
-			[ "$i" != "$mp" ] || make_ro
+			[ -z "$is_rootfs" ] || [ "$i" != "$mp" ] || make_ro
 			umount "$i"
 		done < <(findmnt -o TARGET -Rn --list "$mp" | tac)
 	fi
@@ -91,47 +92,27 @@ isdigits()
 
 settle_umount_events()
 {
-        # Manual umount confuses systemd sometimes because it's async and the
-        # .mount unit might still be active when the "start" is queued, making
-        # it a noop, which ultimately leaves /sysroot unmounted
-        # (https://github.com/systemd/systemd/issues/20329). To avoid that,
-        # wait until systemd processed the umount events. In a chroot (or with
-        # SYSTEMD_OFFLINE=1) systemctl always succeeds, so avoid an infinite loop.
+	# Manual umount confuses systemd sometimes because it's async
+	# and the .mount unit might still be active when the "start"
+	# is queued, making it a noop, which ultimately leaves
+	# /sysroot unmounted.
+	#
+	# (see https://github.com/systemd/systemd/issues/20329)
+	#
+	# To avoid that, wait until systemd processed the umount
+	# events. In a chroot (or with SYSTEMD_OFFLINE=1) systemctl
+	# always succeeds, so avoid an infinite loop.
+	#
 	if [ "$mounted" = "/sysroot" ] && ! systemctl --quiet is-active does-not-exist.mount; then
 		while systemctl --quiet is-active sysroot.mount; do sleep 0.5; done
 	fi
 }
 
-read_password()
-{
-	local password2
-	[ -z "$password" ] || return 0
-	if ! [ -t 0 ]; then
-		read -r -s password
-		return "$?"
-	fi
-        while true; do
-                read -r -s -p "Enter encryption passphrase: " password
-		echo
-		if type -p pwscore &>/dev/null; then
-			echo "$password" | pwscore || continue
-		fi
-                read -r -s -p "Confirm encryption passphrase: " password2
-		echo
-                if [ "$password" != "$password2" ]; then
-                        echo "Entered passwords don't match"
-                        continue
-                fi
-                [ -n "$password" ] || err "No password, no encryption"
-                break
-        done
-}
-
 encrypt()
 {
-	local encrypt_options=(\
-		--reduce-device-size 32m \
-		--progress-frequency=1 \
+	local encrypt_options=(
+		--reduce-device-size 32m
+		--progress-frequency=1
 	)
 	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
 		while read -r op; do
@@ -143,7 +124,7 @@ encrypt()
 	if [ -n "$password" ]; then
 		# XXX: hopefully we can use the kernel keyring in the future here
 		cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name" <<<"$password"
-		[ -z "$gen_key" ] ||  echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
+		[ -z "$gen_key" ] || echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
 	else
 		cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
 	fi
@@ -170,8 +151,8 @@ make_ro()
 	btrfs prop set -t s "$mp" ro true
 }
 
-####### main #######
 
+####### main #######
 getopttmp=$(getopt -o hv --long help,verbose,gen-key,root: -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
@@ -179,8 +160,8 @@ while true ; do
         case "$1" in
                 -h|--help) helpandquit ;;
 		-v|--verbose) verbose=$((++verbose)); shift ;;
-		--gen-key) gen_key="1"; shift;;
-		--root) root_mp="$2"; is_rootfs=; shift 2;;
+		--gen-key) gen_key="1"; shift ;;
+		--root) root_mp="$2"; is_rootfs=; shift 2 ;;
                 --) shift ; break ;;
                 *) echo "Internal error!" ; exit 1 ;;
         esac
@@ -191,7 +172,6 @@ done
 { [ -n "$1" ] && [ -n "$2" ]; } || helpandquit
 
 cr_name="$2"
-
 [ -e "/dev/mapper/$cr_name" ] && err "$cr_name exists. Exit."
 
 if [ -d "$1" ] || [ -b "$1" ]; then
@@ -203,6 +183,7 @@ if [ -d "$1" ] || [ -b "$1" ]; then
 		mounted="$1"
 		blkpart="$(findmnt -nvo SOURCE "$mp")"
 	fi
+
 	[ -L "/sys/class/block/${blkpart##*/}" ] || err "$blkpart is not a partition"
 	blkdev="$(readlink -f "/sys/class/block/${blkpart##*/}")"
 	blkdev="${blkdev%/*}"
@@ -212,8 +193,8 @@ fi
 shift
 shift
 
+declare loop_TYPE
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
-
 [ "$loop_TYPE" != crypto_LUKS ] || { echo "Already encrypted"; exit 0; }
 [ "$loop_TYPE" = btrfs ] || err "File system is ${loop_TYPE:-unknown} but only btrfs is supported"
 
@@ -248,7 +229,8 @@ unset mp
 
 settle_umount_events
 
-# shrink partition to a minimum so reencryption doesn't write everything
+# Shrink partition to a minimum so reencryption doesn't write
+# everything
 log_info "resizing partition"
 echo "size=$((minsize/1024+32*1024))KiB" | sfdisk --force --no-reread -q -N "$partno" "$blkdev"
 udevadm settle
@@ -259,11 +241,10 @@ if [ -n "$gen_key" ]; then
 		# When multiple partitions are being encrypted we want
 		# to generete the key only once for the first one, and
 		# then reuse it if it already exists
-		key_id="$(keyctl id %user:cryptenroll 2> /dev/null)" || true
+		key_id="$(keyctl id %user:cryptenroll 2> /dev/null)" || :
 		if [ -n "$crypt_keyid" ]; then
 			password="$(keyctl pipe "$key_id")"
 		else
-		        read -r key_id_cs < <(echo -n "$password" | keyctl padd user cryptsetup @u)
 		        read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
 		fi
 	fi
