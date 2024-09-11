@@ -8,7 +8,7 @@ check() {
 
 # called by dracut
 depends() {
-	echo "crypt"
+	echo crypt systemd-repart
 	return 0
 }
 

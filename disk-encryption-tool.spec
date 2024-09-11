@@ -31,7 +31,7 @@ Version:        84.87%{git_version}
 Release:        0
 Summary:        Tool to reencrypt kiwi raw images
 License:        MIT
-URL:            https://github.com/lnussel/disk-encryption-tool
+URL:            https://github.com/openSUSE/disk-encryption-tool
 Source:         disk-encryption-tool-%{version}.tar
 BuildRequires:  systemd-rpm-macros
 Requires:       cryptsetup

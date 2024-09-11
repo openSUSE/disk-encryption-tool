@@ -350,6 +350,11 @@ unset mp
 
 settle_umount_events
 
+if [ -d "/etc/repart.d" ]; then
+    log_info "Reparting with systemd-repart...."
+    /usr/bin/systemd-repart --definitions="/etc/repart.d" --dry-run=no ${blkdev}
+fi
+
 # shrink partition to a minimum so reencryption doesn't write everything
 log_info "resizing partition"
 echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -q -N "$partno" "$blkdev"
