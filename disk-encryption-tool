@@ -16,7 +16,6 @@ cr_name=
 cr_dev=
 blkdev=
 blkpart=
-partno=
 root_mp=
 is_rootfs=1
 mp=
@@ -44,12 +43,6 @@ cleanup()
 				mount "$SOURCE" "$TARGET" -t "$FSTYPE" -o "$OPTIONS"
 			done < "$tmpdir/mounts"
 		fi
-	else
-		[ -e "$cr_dev" ] && cryptsetup close "${cr_dev##*/}"
-		case "$blkdev" in
-			/dev/nbd*) qemu-nbd -d "$blkdev" ;;
-			/dev/loop*) losetup -d "$blkdev" ;;
-		esac
 	fi
 	[ -d "$tmpdir" ] && ! mountpoint -q "$tmpdir/mnt" && rm -rf "$tmpdir"
 }
@@ -58,14 +51,13 @@ trap cleanup EXIT
 helpandquit()
 {
 	cat <<-EOF
-		Usage: $0 [OPTIONS] [IMAGE|BLOCKDEV] [VOLUME_NAME]
+		Usage: $0 [OPTIONS] [MOUNTPOINT|BLOCKDEV] [VOLUME_NAME]
 
-		Encrypt IMAGE or BLOCKDEV.  If not specified, uses /sysroot
+		Encrypt MOUNTPOINT or BLOCKDEV.  If not specified, uses /sysroot
 		Default VOLUME_NAME is cr_root
 
 		OPTIONS:
 		  --verbose       verbose
-		  --partno=N      partition number (default 3)
 		  --gen-key       generate random recovery key
 		  --root	  root filesystem (when different from device to encrypt)
 		  -h              help screen
@@ -208,14 +200,13 @@ make_ro()
 
 ####### main #######
 
-getopttmp=$(getopt -o hv --long help,verbose,partno:,gen-key,root: -n "${0##*/}" -- "$@")
+getopttmp=$(getopt -o hv --long help,verbose,gen-key,root: -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
         case "$1" in
                 -h|--help) helpandquit ;;
 		-v|--verbose) verbose=$((++verbose)); shift ;;
-		--partno) partno="$2"; shift 2;;
 		--gen-key) gen_key="1"; shift;;
 		--root) root_mp="$2"; is_rootfs=; shift 2;;
                 --) shift ; break ;;
@@ -245,24 +236,6 @@ if [ -d "$1" ] || [ -b "$1" ]; then
 	blkdev="${blkdev%/*}"
 	blkdev="/dev/${blkdev##*/}"
 	read -r partno < "/sys/class/block/${blkpart##*/}"/partition
-else
-	[ -n "$partno" ] || warn "--partno not specified, assuming 3"
-	: "${partno:=3}"
-	case "${1##*/}" in
-		*.raw )
-			log_info "setting up loop device"
-			blkdev="$(losetup --show -fP "$1")"
-			log_info "loop device $blkdev"
-			;;
-		*.qcow2)
-			[ -e "/dev/nbd0" ] || modprobe nbd
-			blkdev=/dev/nbd0
-			qemu-nbd -c "$blkdev" "$1"
-			udevadm settle
-			;;
-		*) err "Unsupported image" ;;
-	esac
-	blkpart="${blkdev}p${partno}"
 fi
 shift
 shift
