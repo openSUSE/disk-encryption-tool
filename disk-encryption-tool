@@ -162,22 +162,6 @@ encrypt()
 	cr_dev="/dev/mapper/$cr_name"
 }
 
-mountstuff()
-{
-	local mp="${1:-$mp}"
-	mount -t tmpfs -o size=10m tmpfs "$mp/run"
-	for i in proc dev sys; do
-		mount --bind "/$i" "$mp/$i"
-	done
-
-	for i in /.snapshots /boot/efi /boot/writable /var; do
-		grep -q "\s$i\s" "$mp/etc/fstab" || continue
-		[ -d "$mp/$i" ] || continue
-		mountpoint -q "$mp/$i" && continue
-		mount -T "$mp"/etc/fstab --target-prefix="$mp" "/$i"
-	done
-}
-
 make_rw()
 {
 	local mp="${1:-$mp}"
@@ -336,40 +320,6 @@ if [ -n "$loop_UUID" ]; then
 	echo "$cr_name /dev/disk/by-uuid/$loop_UUID none x-initrd.attach" >> "$root_mp"/etc/crypttab
 else
 	warn "Can't determine device UUID. Can't generate crypttab"
-fi
-
-if [ -n "$is_rootfs" ]; then
-	mountstuff
-
-	if grep -q "LOADER_TYPE.*grub2" "$mp"/etc/sysconfig/bootloader; then
-		log_info "Update bootloader"
-
-		echo GRUB_ENABLE_CRYPTODISK=y >> "$mp"/etc/default/grub
-
-		sed -i -e 's/^LOADER_TYPE=.*/LOADER_TYPE="grub2"/' "$mp"/etc/sysconfig/bootloader
-		chroot "$mp" update-bootloader --reinit
-		sed -i -e 's/^LOADER_TYPE=.*/LOADER_TYPE="grub2-efi"/' "$mp"/etc/sysconfig/bootloader
-		chroot "$mp" update-bootloader --reinit
-		mv "$mp/boot/grub2/grub.cfg" "$mp/boot/grub2/grub.cfg.bak"
-		cat > "$mp/boot/grub2/grub.cfg" <<-'EOF'
-		set linux=linux
-		set initrd=initrd
-		if [ "${grub_cpu}" = "x86_64" -o "${grub_cpu}" = "i386" ]; then
-		    if [ "${grub_platform}" = "efi" ]; then
-			set linux=linuxefi
-			set initrd=initrdefi
-		    fi
-		fi
-		export linux initrd
-		EOF
-		sed -e 's/linuxefi/$linux/;s/initrdefi/$initrd/' < "$mp/boot/grub2/grub.cfg.bak" >> "$mp/boot/grub2/grub.cfg"
-		rm "$mp/boot/grub2/grub.cfg.bak"
-	elif [ -e "$mp/etc/kernel/entry-token" ]; then
-		: # sd-boot
-	else
-		log_info "unsupported boot loader"
-		grep LOADER_TYPE "$mp"/etc/sysconfig/bootloader
-	fi
 fi
 
 make_ro "$root_mp"
