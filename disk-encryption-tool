@@ -232,8 +232,13 @@ settle_umount_events
 # Shrink partition to a minimum so reencryption doesn't write
 # everything
 log_info "resizing partition"
-echo "size=$((minsize/1024+32*1024))KiB" | sfdisk --force --no-reread -q -N "$partno" "$blkdev"
+echo "size=$((minsize/1024+32*1024))KiB" | sfdisk --force --no-reread -q -N "$partno" "$blkdev" &> /dev/null
 udevadm settle
+if [ -e /etc/initrd-release ]; then
+	# seems to be the only way to tell the kernel about a specific partition change
+	partx -u --nr "$partno" "$blkdev" || :
+fi
+
 
 if [ -n "$gen_key" ]; then
 	read -r password < <(generate-recovery-key)
