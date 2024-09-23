@@ -1,0 +1,46 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Copyright 2024 SUSE LLC
+set -e
+shopt -s nullglob
+
+unset "${!LC_@}"
+LANG="C.utf8"
+export LANG
+
+blkdev=
+blkpart=
+mp=
+
+log_info()
+{
+	echo "$@"
+}
+
+err()
+{
+	echo "Error: $*" >&2
+	echo "Error: $*"
+	exit 1
+}
+
+####### main #######
+
+[ -e /etc/initrd-release ] || err "No initrd environment"
+
+mp="/sysroot"
+mountpoint -q "${mp}" || err "${mp} is not a valid mountpoint"
+blkpart="$(findmnt -nvo SOURCE "$mp")"
+[ -L "/sys/class/block/${blkpart##*/}" ] || err "$blkpart is not a partition"
+blkdev="$(readlink -f "/sys/class/block/${blkpart##*/}")"
+blkdev="${blkdev%/*}"
+blkdev="/dev/${blkdev##*/}"
+
+if [ -d "/etc/repart.d" ]; then
+	log_info "Reparting with systemd-repart: ${blkdev}"
+	/usr/bin/systemd-repart --definitions="/etc/repart.d" --dry-run=no ${blkdev}
+else
+	log_info "No systemd-repart configuration files found"
+fi
+
+log_info "Repartition completed"
