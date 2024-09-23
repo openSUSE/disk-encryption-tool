@@ -268,8 +268,8 @@ if [ -e /etc/initrd-release ]; then
 fi
 
 if [ -z "$mounted" ]; then
-	mount -o rw "$cr_dev" "/mnt"
-	mp="/mnt"
+	mount -o rw "$cr_dev" "$tmpdir/mnt"
+	mp="$tmpdir/mnt"
 else
 	read -r line < "$tmpdir/mounts"
 	eval "$line"
