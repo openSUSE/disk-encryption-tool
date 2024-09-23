@@ -247,7 +247,7 @@ if [ -n "$gen_key" ]; then
 		# to generete the key only once for the first one, and
 		# then reuse it if it already exists
 		key_id="$(keyctl id %user:cryptenroll 2> /dev/null)" || :
-		if [ -n "$crypt_keyid" ]; then
+		if [ -n "$key_id" ]; then
 			password="$(keyctl pipe "$key_id")"
 		else
 		        read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
