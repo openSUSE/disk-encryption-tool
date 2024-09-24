@@ -19,6 +19,7 @@ OnFailureJobMode=isolate
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/disk-encryption-repart-dracut
+StandardOutput=journal+console
 
 [Install]
 RequiredBy=firstboot.target
