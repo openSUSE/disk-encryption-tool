@@ -1,6 +1,4 @@
 #!/bin/bash
-# https://bugzilla.suse.com/show_bug.cgi?id=1230912 workaround: combustion: network
-# combustion: network
 set -euxo pipefail
 
 # Some basic combustion testing:
@@ -68,6 +66,8 @@ if ! [ -n "${reuseinitrd}" ] || ! [ -e "${tmpdir}/vmlinuz" ] || ! [ -e "${tmpdir
 	rm -f "${tmpdir}/done"
 	cat >create-initrd <<'EOF'
 #!/bin/bash
+# https://bugzilla.suse.com/show_bug.cgi?id=1230912 workaround: combustion: network
+# combustion: network
 set -euxo pipefail
 exec &>/dev/ttyS0
 trap '[ $? -eq 0 ] || poweroff -f' EXIT
