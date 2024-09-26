@@ -26,6 +26,9 @@ err()
 
 ####### main #######
 
+# silence systemd
+kill -SIGRTMIN+21 1
+
 [ -e /etc/initrd-release ] || err "No initrd environment"
 
 mp="/sysroot"
@@ -44,3 +47,6 @@ else
 fi
 
 log_info "Repartition completed"
+
+# turn messages on again
+kill -SIGRTMIN+20 1
