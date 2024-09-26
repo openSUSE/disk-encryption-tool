@@ -9,8 +9,6 @@ After=initrd-root-device.target
 
 After=combustion.service
 
-After=disk-encryption-repart-dracut.service
-
 # After ignition completed its stuff
 After=ignition-complete.target
 
