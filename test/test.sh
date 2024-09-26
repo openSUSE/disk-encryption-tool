@@ -1,6 +1,4 @@
 #!/bin/bash
-# https://bugzilla.suse.com/show_bug.cgi?id=1230912 workaround: combustion: network
-# combustion: network
 set -euxo pipefail
 
 # Some basic combustion testing:
