@@ -8,7 +8,7 @@ check() {
 
 # called by dracut
 depends() {
-	echo crypt systemd-repart
+	echo "crypt"
 	return 0
 }
 
@@ -20,10 +20,9 @@ install() {
 
 	inst_script "$moddir"/disk-encryption-tool /usr/bin/disk-encryption-tool
 	inst_script "$moddir"/disk-encryption-tool-dracut /usr/bin/disk-encryption-tool-dracut
-	inst_script "$moddir"/systemd-repart-dracut /usr/bin/systemd-repart-dracut
 	inst_script "$moddir"/generate-recovery-key /usr/bin/generate-recovery-key
 
-	for service in "disk-encryption-tool-dracut.service" "systemd-repart-dracut.service"; do
+	for service in "disk-encryption-tool-dracut.service"; do
 		inst_simple "${moddir}/$service" "${systemdsystemunitdir}/$service"
 		$SYSTEMCTL -q --root "$initdir" enable "$service"
 		#$SYSTEMCTL -q --root "$initdir" enable "debug-shell.service"
