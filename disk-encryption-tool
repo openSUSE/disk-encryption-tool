@@ -9,24 +9,26 @@ LANG="C.utf8"
 export LANG
 
 verbose=
-prime=
 gen_key=
+root_mp=
 
+is_rootfs=1
 switched_rw=
-cr_name='cr_root'
+cr_name=
 cr_dev=
 blkdev=
 blkpart=
-partno=
 mp=
 mounted=
+
 tmpdir=$(mktemp -d -t disk-encryption-tool.XXXXXX)
+
 cleanup()
 {
 	set +e
 	if [ -n "$mp" ]; then
 		while read -r i; do
-			[ "$i" != "$mp" ] || make_ro
+			[ -z "$is_rootfs" ] || [ "$i" != "$mp" ] || make_ro
 			umount "$i"
 		done < <(findmnt -o TARGET -Rn --list "$mp" | tac)
 	fi
@@ -42,12 +44,6 @@ cleanup()
 				mount "$SOURCE" "$TARGET" -t "$FSTYPE" -o "$OPTIONS"
 			done < "$tmpdir/mounts"
 		fi
-	else
-		[ -e "$cr_dev" ] && cryptsetup close "${cr_dev##*/}"
-		case "$blkdev" in
-			/dev/nbd*) qemu-nbd -d "$blkdev" ;;
-			/dev/loop*) losetup -d "$blkdev" ;;
-		esac
 	fi
 	[ -d "$tmpdir" ] && ! mountpoint -q "$tmpdir/mnt" && rm -rf "$tmpdir"
 }
@@ -56,15 +52,15 @@ trap cleanup EXIT
 helpandquit()
 {
 	cat <<-EOF
-		Usage: $0 [OPTIONS] IMAGE|BLOCKDEV
+		Usage: $0 [OPTIONS] [MOUNTPOINT|BLOCKDEV] [VOLUME_NAME]
 
-		Encrypt IMAGE or BLOCKDEV
+		Encrypt MOUNTPOINT or BLOCKDEV.  If not specified, uses /sysroot
+		Default VOLUME_NAME is cr_root
 
 		OPTIONS:
 		  --verbose       verbose
-		  --prime         add hook scripts to initrd to encrypt on first boot
-		  --partno=N      partition number (default 3)
 		  --gen-key       generate random recovery key
+		  --root	  root filesystem (when different from device to encrypt)
 		  -h              help screen
 
 	EOF
@@ -96,47 +92,27 @@ isdigits()
 
 settle_umount_events()
 {
-        # Manual umount confuses systemd sometimes because it's async and the
-        # .mount unit might still be active when the "start" is queued, making
-        # it a noop, which ultimately leaves /sysroot unmounted
-        # (https://github.com/systemd/systemd/issues/20329). To avoid that,
-        # wait until systemd processed the umount events. In a chroot (or with
-        # SYSTEMD_OFFLINE=1) systemctl always succeeds, so avoid an infinite loop.
+	# Manual umount confuses systemd sometimes because it's async
+	# and the .mount unit might still be active when the "start"
+	# is queued, making it a noop, which ultimately leaves
+	# /sysroot unmounted.
+	#
+	# (see https://github.com/systemd/systemd/issues/20329)
+	#
+	# To avoid that, wait until systemd processed the umount
+	# events. In a chroot (or with SYSTEMD_OFFLINE=1) systemctl
+	# always succeeds, so avoid an infinite loop.
+	#
 	if [ "$mounted" = "/sysroot" ] && ! systemctl --quiet is-active does-not-exist.mount; then
 		while systemctl --quiet is-active sysroot.mount; do sleep 0.5; done
 	fi
 }
 
-read_password()
-{
-	local password2
-	[ -z "$password" ] || return 0
-	if ! [ -t 0 ]; then
-		read -r -s password
-		return "$?"
-	fi
-        while true; do
-                read -r -s -p "Enter encryption passphrase: " password
-		echo
-		if type -p pwscore &>/dev/null; then
-			echo "$password" | pwscore || continue
-		fi
-                read -r -s -p "Confirm encryption passphrase: " password2
-		echo
-                if [ "$password" != "$password2" ]; then
-                        echo "Entered passwords don't match"
-                        continue
-                fi
-                [ -n "$password" ] || err "No password, no encryption"
-                break
-        done
-}
-
 encrypt()
 {
-	local encrypt_options=(\
-		--reduce-device-size 32m \
-		--progress-frequency=1 \
+	local encrypt_options=(
+		--reduce-device-size 32m
+		--progress-frequency=1
 	)
 	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
 		while read -r op; do
@@ -144,70 +120,20 @@ encrypt()
 			encrypt_options+=("$op")
 		done < "${ENCRYPTION_CONFIG:-/etc/encrypt_options}"
 	fi
-	# sle 15 compat code
-	if type -p cryptsetup-reencrypt &> /dev/null; then
-		read_password
-
-		echo "$password" | cryptsetup-reencrypt --new --type luks1 "${encrypt_options[@]}" "$@" "${blkpart}"
-
-		log_info "Encryption done"
-
-		log_info "open encrypted image"
-		echo "$password" | cryptsetup open "${blkpart}" "$cr_name"
+	log_info "encrypt with options ${encrypt_options[*]}"
+	if [ -n "$password" ]; then
+		# XXX: hopefully we can use the kernel keyring in the future here
+		cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name" <<<"$password"
+		[ -z "$gen_key" ] || echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
 	else
-		log_info "encrypt with options ${encrypt_options[*]}"
-		if [ -n "$password" ]; then
-			# XXX: hopefully we can use the kernel keyring in the future here
-			cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name" <<<"$password"
-			[ -z "$gen_key" ] ||  echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
-		else
-			cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
-		fi
+		cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
 	fi
 	cr_dev="/dev/mapper/$cr_name"
 }
 
-call_dracut()
-{
-	if [ -L "$mp/boot/initrd" ]; then
-		local initrd kv
-		initrd="$(readlink "$mp/boot/initrd")"
-		kv="${initrd#initrd-}"
-		log_info "create initrd for $kv"
-		chroot "$mp" dracut --add-drivers dm_crypt -q -f "/boot/$initrd" "$kv" "$@"
-	elif [ -e "$mp/etc/kernel/entry-token" ]; then
-		local token kernel kv
-		read -r token < "$mp/etc/kernel/entry-token"
-		log_info "token $token"
-		for initrd in "$mp/boot/efi/$token"/*/initrd-*; do
-			kv="${initrd%/*}"
-			kv="${kv##*/}"
-			initrd="${initrd#"$mp"}"
-			log_info "create $initrd for $kv"
-			hostonly_l=no chroot "$mp" dracut -q --reproducible -f "$initrd" "$kv" "$@"
-		done
-	else
-		err "Unsupported boot loader or fs layout"
-	fi
-}
-
-mountstuff()
-{
-	mount -t tmpfs -o size=10m tmpfs "$mp/run"
-	for i in proc dev sys; do
-		mount --bind "/$i" "$mp/$i"
-	done
-
-	for i in /.snapshots /boot/efi /boot/writable /var; do
-		grep -q "\s$i\s" "$mp/etc/fstab" || continue
-		[ -d "$mp/$i" ] || continue
-		mountpoint -q "$mp/$i" && continue
-		mount -T "$mp"/etc/fstab --target-prefix="$mp" "/$i"
-	done
-}
-
 make_rw()
 {
+	local mp="${1:-$mp}"
 	local prop
 	read -r prop < <(btrfs prop get -t s "$mp" ro)
 	[ "$prop" = "ro=true" ] || return 0
@@ -218,34 +144,35 @@ make_rw()
 
 make_ro()
 {
+	local mp="${1:-$mp}"
 	[ -n "$switched_rw" ] || return 0
 	unset switched_rw
 	log_info "set ro again"
 	btrfs prop set -t s "$mp" ro true
 }
 
-####### main #######
 
-getopttmp=$(getopt -o hv --long help,verbose,prime,partno:,gen-key -n "${0##*/}" -- "$@")
+####### main #######
+getopttmp=$(getopt -o hv --long help,verbose,gen-key,root: -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
         case "$1" in
                 -h|--help) helpandquit ;;
 		-v|--verbose) verbose=$((++verbose)); shift ;;
-		--prime) prime="1"; shift ;;
-		--partno) partno="$2"; shift 2;;
-		--gen-key) gen_key="1"; shift;;
+		--gen-key) gen_key="1"; shift ;;
+		--root) root_mp="$2"; is_rootfs=; shift 2 ;;
                 --) shift ; break ;;
                 *) echo "Internal error!" ; exit 1 ;;
         esac
 done
 
-[ -z "$1" ] && [ -e /etc/initrd-release ] && set -- /sysroot
+[ -z "$1" ] && [ -e /etc/initrd-release ] && set -- /sysroot cr_root
 
-[ -n "$1" ] || helpandquit
+{ [ -n "$1" ] && [ -n "$2" ]; } || helpandquit
 
-[ -z "$prime" ] && [ -e "/dev/mapper/$cr_name" ] && err "$cr_name exists. Exit."
+cr_name="$2"
+[ -e "/dev/mapper/$cr_name" ] && err "$cr_name exists. Exit."
 
 if [ -d "$1" ] || [ -b "$1" ]; then
 	if [ -b "$1" ]; then
@@ -256,34 +183,18 @@ if [ -d "$1" ] || [ -b "$1" ]; then
 		mounted="$1"
 		blkpart="$(findmnt -nvo SOURCE "$mp")"
 	fi
+
 	[ -L "/sys/class/block/${blkpart##*/}" ] || err "$blkpart is not a partition"
 	blkdev="$(readlink -f "/sys/class/block/${blkpart##*/}")"
 	blkdev="${blkdev%/*}"
 	blkdev="/dev/${blkdev##*/}"
 	read -r partno < "/sys/class/block/${blkpart##*/}"/partition
-else
-	[ -n "$partno" ] || warn "--partno not specified, assuming 3"
-	: "${partno:=3}"
-	case "${1##*/}" in
-		*.raw )
-			log_info "setting up loop device"
-			blkdev="$(losetup --show -fP "$1")"
-			log_info "loop device $blkdev"
-			;;
-		*.qcow2)
-			[ -e "/dev/nbd0" ] || modprobe nbd
-			blkdev=/dev/nbd0
-			qemu-nbd -c "$blkdev" "$1"
-			udevadm settle
-			;;
-		*) err "Unsupported image" ;;
-	esac
-	blkpart="${blkdev}p${partno}"
 fi
 shift
+shift
 
+declare loop_TYPE
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
-
 [ "$loop_TYPE" != crypto_LUKS ] || { echo "Already encrypted"; exit 0; }
 [ "$loop_TYPE" = btrfs ] || err "File system is ${loop_TYPE:-unknown} but only btrfs is supported"
 
@@ -296,38 +207,6 @@ else
 	mountpoint -q "$mp" || err "$mp is not mounted"
 	findmnt -o SOURCE,TARGET,FSTYPE,OPTIONS -Rvn --pairs "$mp" > "$tmpdir/mounts"
 	mount -o remount,rw "$mp"
-fi
-
-if [ -n "$prime" ]; then
-	mkdir -p "$tmpdir/overlay-w"
-	dst="$tmpdir/overlay/95disk-encryption-tool"
-	mkdir -p "$dst"
-	for i in disk-encryption-tool disk-encryption-tool-dracut module-setup.sh \
-			disk-encryption-tool-dracut.service generate-recovery-key; do
-		cp "${0%/*}/$i" "$dst/$i"
-	done
-	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
-		cp "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" "$dst/encrypt_options"
-		export ENCRYPTION_CONFIG="/usr/lib/dracut/modules.d/95disk-encryption-tool/encrypt_options"
-	fi
-
-	make_rw
-
-	mountstuff
-
-	# dirty
-	if [ -d "$mp/usr/share/jeos-firstboot/modules" ]; then
-		install -D -m 644 "${0%/*}/jeos-firstboot-diskencrypt-override.conf" "$mp/usr/lib/systemd/system/jeos-firstboot.service.d/jeos-firstboot-diskencrypt-override.conf"
-		cp "${0%/*}/jeos-firstboot-enroll" "$mp/usr/share/jeos-firstboot/modules/enroll"
-	fi
-
-	mount -t overlay overlay \
-		-o lowerdir="$mp/usr/lib/dracut/modules.d/,upperdir=$tmpdir/overlay,workdir=$tmpdir/overlay-w" \
-		"$mp/usr/lib/dracut/modules.d/"
-
-	call_dracut
-
-	exit 0
 fi
 
 read -r minsize bytes _rest < <(btrfs inspect-internal min-dev-size "$mp")
@@ -350,17 +229,31 @@ unset mp
 
 settle_umount_events
 
-# shrink partition to a minimum so reencryption doesn't write everything
+# Shrink partition to a minimum so reencryption doesn't write
+# everything
 log_info "resizing partition"
-echo "size=$((minsize/1024+32*1024))KiB" | sfdisk -q -N "$partno" "$blkdev"
+echo "size=$((minsize/1024+32*1024))KiB" | sfdisk --force --no-reread -q -N "$partno" "$blkdev" &> /dev/null
 udevadm settle
+if [ -e /etc/initrd-release ]; then
+	# seems to be the only way to tell the kernel about a specific partition change
+	partx -u --nr "$partno" "$blkdev" || :
+fi
+
 
 if [ -n "$gen_key" ]; then
 	read -r password < <(generate-recovery-key)
-	echo -e "Recovery key: \e[1m$password\e[m"
 	if [ -e /etc/initrd-release ]; then
-		read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
+		# When multiple partitions are being encrypted we want
+		# to generete the key only once for the first one, and
+		# then reuse it if it already exists
+		key_id="$(keyctl id %user:cryptenroll 2> /dev/null)" || :
+		if [ -n "$crypt_keyid" ]; then
+			password="$(keyctl pipe "$key_id")"
+		else
+		        read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
+		fi
 	fi
+	echo -e "Recovery key: \e[1m$password\e[m"
 fi
 
 echo "Encrypting..."
@@ -391,51 +284,18 @@ fi
 log_info "resizing fs to max again"
 btrfs filesystem resize max "$mp"
 
-make_rw
+root_mp="${root_mp:-$mp}"
+
+make_rw "$root_mp"
 
 declare loop_UUID
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 if [ -n "$loop_UUID" ]; then
-	echo "$cr_name /dev/disk/by-uuid/$loop_UUID none x-initrd.attach" > "$mp"/etc/crypttab
+	echo "$cr_name /dev/disk/by-uuid/$loop_UUID none x-initrd.attach" >> "$root_mp"/etc/crypttab
 else
 	warn "Can't determine device UUID. Can't generate crypttab"
 fi
 
-mountstuff
-
-if grep -q "LOADER_TYPE.*grub2" "$mp"/etc/sysconfig/bootloader; then
-	log_info "Update bootloader"
-
-	echo GRUB_ENABLE_CRYPTODISK=y >> "$mp"/etc/default/grub
-
-	sed -i -e 's/^LOADER_TYPE=.*/LOADER_TYPE="grub2"/' "$mp"/etc/sysconfig/bootloader
-	chroot "$mp" update-bootloader --reinit
-	sed -i -e 's/^LOADER_TYPE=.*/LOADER_TYPE="grub2-efi"/' "$mp"/etc/sysconfig/bootloader
-	chroot "$mp" update-bootloader --reinit
-	mv "$mp/boot/grub2/grub.cfg" "$mp/boot/grub2/grub.cfg.bak"
-	cat > "$mp/boot/grub2/grub.cfg" <<-'EOF'
-	set linux=linux
-	set initrd=initrd
-	if [ "${grub_cpu}" = "x86_64" -o "${grub_cpu}" = "i386" ]; then
-	    if [ "${grub_platform}" = "efi" ]; then
-		set linux=linuxefi
-		set initrd=initrdefi
-	    fi
-	fi
-	export linux initrd
-	EOF
-	sed -e 's/linuxefi/$linux/;s/initrdefi/$initrd/' < "$mp/boot/grub2/grub.cfg.bak" >> "$mp/boot/grub2/grub.cfg"
-	rm "$mp/boot/grub2/grub.cfg.bak"
-elif [ -e "$mp/etc/kernel/entry-token" ]; then
-	: # sd-boot
-else
-	log_info "unsupported boot loader"
-	grep LOADER_TYPE "$mp"/etc/sysconfig/bootloader
-fi
-
-# A new initrd is created as side effect of the enrolment
-# (jeos-firtboot module), as this calls sdbootutil
-
-make_ro
+make_ro "$root_mp"
 
 echo "Image encryption completed"
