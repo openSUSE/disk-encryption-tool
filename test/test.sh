@@ -34,8 +34,8 @@ QEMU_BASEARGS=(
 	-chardev null,id=serial,logfile=/dev/stdout,logappend=on -serial chardev:serial -monitor none
 	-virtfs "local,path=${tmpdir},mount_tag=tmpdir,security_model=none")
 
-if [ -e /usr/share/qemu/ovmf-x86_64-code.bin ]; then
-	QEMU_BASEARGS+=(-bios /usr/share/qemu/ovmf-x86_64-code.bin)
+if [ -e /usr/share/qemu/ovmf-x86_64.bin ]; then
+	QEMU_BASEARGS+=(-bios /usr/share/qemu/ovmf-x86_64.bin)
 elif [ -e /usr/share/qemu/OVMF.fd ]; then
 	QEMU_BASEARGS+=(-bios /usr/share/qemu/OVMF.fd)
 else
