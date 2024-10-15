@@ -1,6 +1,5 @@
 #!/bin/bash
-# https://bugzilla.suse.com/show_bug.cgi?id=1230912 workaround: combustion: network
-# combustion: prepare network
+# combustion: prepare
 set -euxo pipefail
 exec &>/dev/ttyS0
 
