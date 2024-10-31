@@ -9,7 +9,7 @@ get_credential() {
 	if [ -e "$CREDENTIALS_DIRECTORY/$name" ]; then
 		read -r "$var" < "$CREDENTIALS_DIRECTORY/$name"
 	elif [ -n "$keyid" ]; then
-		read -r "$var" <<< "$(keyctl pipe "$keyid")"
+		read -r "$var" <<<"$(keyctl pipe "$keyid")"
 	fi
 }
 
@@ -52,6 +52,9 @@ write_issue_file
 pw=
 get_credential pw "disk-encryption-tool-enroll.pw"
 
+key=
+get_credential key "disk-encryption-tool-enroll.key"
+
 tpm2_pin=
 get_credential tpm2_pin "disk-encryption-tool-enroll.tpm2+pin"
 
@@ -71,6 +74,18 @@ get_credential fido2 "disk-encryption-tool-enroll.fido2"
 		extra="--no-reuse-initrd"
 	fi
 	PW="$pw" sdbootutil enroll --method=password "$extra"
+}
+
+[ -z "$key" ] || {
+	echo "Enrolling recovery key"
+	# Note that if --no-reuse-initrd is used, then a new initrd
+	# will be created and will break the measurement of the
+	# initial components if later the TPM2 enrollment is called
+	extra=
+	if [ -z "$tpm2_pin" ] && [ -z "$tpm2" ] && [ -z "$fido2" ]; then
+		extra="--no-reuse-initrd"
+	fi
+	sdbootutil enroll --method=recovery-key "$extra"
 }
 
 if [ -n "$tpm2_pin" ]; then
