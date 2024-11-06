@@ -8,6 +8,7 @@ cryptenroll_tpm_extra_args=()
 
 with_fido2=
 with_tpm2=
+with_recovery_key=
 
 luks2_devices=()
 
@@ -35,6 +36,9 @@ enroll_systemd_firstboot() {
 	while true; do
 		local list=()
 
+		if [ -z "$with_recovery_key" ]; then
+			list+=('recovery-key' $'Enroll recovery key')
+		fi
 		if [ -z "$with_fido2" ] && [ -z "$with_tpm2" ] && [ -n "$has_fido2" ]; then
 			list+=('FIDO2' $'Enroll FIDO2 token')
 		fi
@@ -73,7 +77,8 @@ enroll_systemd_firstboot() {
 				[ "$crypt_tpm_pin" != "$result" ] || { with_tpm2="$has_tpm2"; break; }
 				d --msgbox $"PINs don't match. Try again" 0 0
 			done
-
+		elif [ "$result" = 'recovery-key' ]; then
+			with_recovery_key=1
 		elif [ "$result" = 'root' ]; then
 			crypt_pw="$password"
 		elif [ "$result" = 'password' ]; then
@@ -97,6 +102,8 @@ enroll_systemd_firstboot() {
 }
 
 write_issue_file() {
+	local recovery_key="$1"
+
 	if [ -e '/usr/sbin/issue-generator' ] && [ -z "$dry" ]; then
 		mkdir -p "/run/issue.d/"
 		issuefile="/run/issue.d/90-diskencrypt.conf"
@@ -104,14 +111,7 @@ write_issue_file() {
 		issuefile='/dev/stdout'
 	fi
 
-	echo -ne "Encryption recovery key:\n  " > "$issuefile"
-	keyctl pipe "$crypt_keyid" >> "$issuefile"
-	echo -e "\n" >> "$issuefile"
-	if [ -x /usr/bin/qrencode ]; then
-		echo "You can also scan it with your mobile phone:" >> "$issuefile"
-		keyctl pipe "$crypt_keyid" | qrencode -t utf8i >> "$issuefile"
-	fi
-
+	echo "$recovery_key" > "$issuefile"
 	run issue-generator
 }
 
@@ -119,11 +119,24 @@ enroll_post() {
 	[ -e /usr/bin/systemd-cryptenroll ] || return 0
 	[ -n "$crypt_keyid" ] || return 0
 
-	write_issue_file
 	do_enroll
 }
 
 do_enroll() {
+	[ -z "$with_recovery_key" ] || {
+		# Note that if --no-reuse-initrd is used, then a new
+		# initrd will be created and will break the
+		# measurement of the initial components if later the
+		# TPM2 enrollment is called
+		extra=
+		if [ -z "$with_tpm2" ] && [ -z "$with_fido2" ]; then
+			extra="--no-reuse-initrd"
+		fi
+		local recovery_key
+		recovery_key="$(run sdbootutil enroll --method=recovery-key "$extra")"
+		write_issue_file "$recovery_key"
+	}
+
 	[ -z "$crypt_pw" ] || {
 		# Note that if --no-reuse-initrd is used, then a new
 		# initrd will be created and will break the

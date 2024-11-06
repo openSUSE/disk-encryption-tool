@@ -47,7 +47,7 @@ fi
 testdir="$(dirname "$0")"
 # TODO: Use a Makefile for this and in the .spec file.
 mkdir -p "${tmpdir}/install/usr/lib/dracut/modules.d/95disk-encryption-tool"
-for i in disk-encryption-tool{,-dracut,-dracut.service} module-setup.sh generate-recovery-key; do
+for i in disk-encryption-tool{,-dracut,-dracut.service} module-setup.sh; do
 	cp "${testdir}/../${i}" "${tmpdir}/install/usr/lib/dracut/modules.d/95disk-encryption-tool/${i}"
 done
 cp "${testdir}/"{testscript,config.ign} "${tmpdir}"

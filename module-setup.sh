@@ -20,7 +20,6 @@ install() {
 
 	inst_script "$moddir"/disk-encryption-tool /usr/bin/disk-encryption-tool
 	inst_script "$moddir"/disk-encryption-tool-dracut /usr/bin/disk-encryption-tool-dracut
-	inst_script "$moddir"/generate-recovery-key /usr/bin/generate-recovery-key
 
 	for service in "disk-encryption-tool-dracut.service"; do
 		inst_simple "${moddir}/$service" "${systemdsystemunitdir}/$service"
