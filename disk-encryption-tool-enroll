@@ -9,7 +9,7 @@ get_credential() {
 	if [ -e "$CREDENTIALS_DIRECTORY/$name" ]; then
 		read -r "$var" < "$CREDENTIALS_DIRECTORY/$name"
 	elif [ -n "$keyid" ]; then
-		read -r "$var" <<< "$(keyctl pipe "$keyid")"
+		read -r "$var" <<<"$(keyctl pipe "$keyid")"
 	fi
 }
 
@@ -17,7 +17,10 @@ have_luks2() {
 	lsblk --noheadings -o PATH,FSTYPE | grep -q crypto_LUKS
 }
 
-write_issue_file() {
+write_issue_file()
+{
+	local recovery_key="$1"
+
 	if [ -e '/usr/sbin/issue-generator' ]; then
 		mkdir -p "/run/issue.d/"
 		issuefile="/run/issue.d/90-diskencrypt.conf"
@@ -25,29 +28,27 @@ write_issue_file() {
 		issuefile='/dev/stdout'
 	fi
 
-	echo -ne "Encryption recovery key:\n  " > "$issuefile"
-	keyctl pipe "$crypt_keyid" >> "$issuefile"
-	echo -e "\n" >> "$issuefile"
-	if [ -x /usr/bin/qrencode ]; then
-		echo "You can also scan it with your mobile phone:" >> "$issuefile"
-		keyctl pipe "$crypt_keyid" | qrencode -t utf8i >> "$issuefile"
-	fi
-
+	echo "$recovery_key" > "$issuefile"
 	issue-generator
 }
 
 
 [ ! -e "/var/lib/YaST2/reconfig_system" ] || exit 0
 have_luks2 || exit 0
-crypt_keyid="$(keyctl id %user:cryptenroll 2> /dev/null)" || exit 0
-[ -n "$crypt_keyid" ] || {
-	echo "Recovery key not registered in the keyring. Aborting" > /dev/stderr
+
+# disk-encryption-tool-dracut uses "cryptenroll" for the keyring
+# parameter, if we use a different one we need to move it back to
+# "cryptenroll", to do the enrollment via sdbootutil without
+# requesting a password
+enroll_keyid="$(keyctl id %user:cryptenroll 2> /dev/null)" || exit 0
+[ -n "$enroll_keyid" ] || {
+	echo "Enrollment key not registered in the keyring. Aborting" > /dev/stderr
 	exit 1
 }
 
-write_issue_file
-
 # Proceed with the enrollment
+rk=
+get_credential rk "disk-encryption-tool-enroll.rk"
 
 pw=
 get_credential pw "disk-encryption-tool-enroll.pw"
@@ -60,6 +61,19 @@ get_credential tpm2 "disk-encryption-tool-enroll.tpm2"
 
 fido2=
 get_credential fido2 "disk-encryption-tool-enroll.fido2"
+
+[ -z "$rk" ] || {
+	echo "Enrolling recovery key"
+	# Note that if --no-reuse-initrd is used, then a new initrd
+	# will be created and will break the measurement of the
+	# initial components if later the TPM2 enrollment is called
+	extra=
+	if [ -z "$tpm2_pin" ] && [ -z "$tpm2" ] && [ -z "$fido2" ]; then
+		extra="--no-reuse-initrd"
+	fi
+	recovery_key="$(sdbootutil enroll --method=recovery-key "$extra")"
+	write_issue_file "$recovery_key"
+}
 
 [ -z "$pw" ] || {
 	echo "Enrolling password"

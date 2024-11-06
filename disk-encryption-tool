@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# SPDX-FileCopyrightText: Copyright 2023 SUSE LLC
+# SPDX-FileCopyrightText: Copyright 2024 SUSE LLC
 set -e
 shopt -s nullglob
 
@@ -9,9 +9,11 @@ LANG="C.utf8"
 export LANG
 
 verbose=
-gen_key=
+password=
+keyring=
 root_mp=
 
+is_generated=1
 is_rootfs=1
 switched_rw=
 cr_name=
@@ -20,6 +22,7 @@ blkdev=
 blkpart=
 mp=
 mounted=
+keyid=
 
 tmpdir=$(mktemp -d -t disk-encryption-tool.XXXXXX)
 
@@ -59,8 +62,9 @@ helpandquit()
 
 		OPTIONS:
 		  --verbose       verbose
-		  --gen-key       generate random recovery key
-		  --root	  root filesystem (when different from device to encrypt)
+		  --key           LUKS2 key (use --verbose to print the key if generated)
+		  --keyring       store the generated key in the specified keyring
+		  --root          root filesystem (when different from device to encrypt)
 		  -h              help screen
 
 	EOF
@@ -111,7 +115,7 @@ settle_umount_events()
 encrypt()
 {
 	local encrypt_options=(
-		--reduce-device-size 32m
+		--reduce-device-size=32m
 		--progress-frequency=1
 	)
 	if [ -e "${ENCRYPTION_CONFIG:-/etc/encrypt_options}" ]; then
@@ -124,7 +128,7 @@ encrypt()
 	if [ -n "$password" ]; then
 		# XXX: hopefully we can use the kernel keyring in the future here
 		cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name" <<<"$password"
-		[ -z "$gen_key" ] || echo '{"type":"systemd-recovery","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
+		[ -z "$is_generated" ] || echo '{"type":"enrollment-key","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
 	else
 		cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
 	fi
@@ -153,14 +157,15 @@ make_ro()
 
 
 ####### main #######
-getopttmp=$(getopt -o hv --long help,verbose,gen-key,root: -n "${0##*/}" -- "$@")
+getopttmp=$(getopt -o hv --long help,verbose,key:,keyring:root: -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
         case "$1" in
                 -h|--help) helpandquit ;;
 		-v|--verbose) verbose=$((++verbose)); shift ;;
-		--gen-key) gen_key="1"; shift ;;
+		--key) password="$2"; is_generated=; shift 2 ;;
+		--keyring) keyring="$2"; shift 2 ;;
 		--root) root_mp="$2"; is_rootfs=; shift 2 ;;
                 --) shift ; break ;;
                 *) echo "Internal error!" ; exit 1 ;;
@@ -190,8 +195,7 @@ if [ -d "$1" ] || [ -b "$1" ]; then
 	blkdev="/dev/${blkdev##*/}"
 	read -r partno < "/sys/class/block/${blkpart##*/}"/partition
 fi
-shift
-shift
+shift 2
 
 declare loop_TYPE
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
@@ -239,21 +243,22 @@ if [ -e /etc/initrd-release ]; then
 	partx -u --nr "$partno" "$blkdev" || :
 fi
 
-
-if [ -n "$gen_key" ]; then
-	read -r password < <(generate-recovery-key)
-	if [ -e /etc/initrd-release ]; then
-		# When multiple partitions are being encrypted we want
-		# to generete the key only once for the first one, and
-		# then reuse it if it already exists
-		key_id="$(keyctl id %user:cryptenroll 2> /dev/null)" || :
-		if [ -n "$key_id" ]; then
-			password="$(keyctl pipe "$key_id")"
-		else
-		        read -r key_id < <(echo -n "$password" | keyctl padd user cryptenroll @u)
-		fi
+# If a keyring is set, see if the password is stored there and recover
+# it.  It is useful for multidisk setups
+if [ -n "$keyring" ]; then
+	keyid="$(keyctl id %user:"$keyring" 2> /dev/null)" || :
+	if [ -n "$keyid" ]; then
+		password="$(keyctl pipe "$keyid")"
 	fi
-	echo -e "Recovery key: \e[1m$password\e[m"
+fi
+
+if [ -z "$password" ]; then
+	password="$(dd if=/dev/urandom bs=8 count=1 2> /dev/null | base64)"
+	if [ -n "$keyring" ]; then
+		echo -n "$password" | keyctl padd user "$keyring" @u > /dev/null
+		keyctl timeout %user:"$keyring" 600
+	fi
+	[ -z "$verbose" ] || echo -e "Enrollment key: \e[1m$password\e[m"
 fi
 
 echo "Encrypting..."
