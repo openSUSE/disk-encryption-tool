@@ -11,6 +11,7 @@ export LANG
 verbose=
 password=
 keyring=
+crypttab_options=
 root_mp=
 
 is_generated=1
@@ -64,6 +65,10 @@ helpandquit()
 		  --verbose       verbose
 		  --key           LUKS2 key (use --verbose to print the key if generated)
 		  --keyring       store the generated key in the specified keyring
+		  --options	  /etc/crypttab options
+				  auto: (default) set x-initrd.{mount,attach} if required
+				  none: set empty options
+				  <options>: set <options>
 		  --root          root filesystem (when different from device to encrypt)
 		  -h              help screen
 
@@ -157,7 +162,7 @@ make_ro()
 
 
 ####### main #######
-getopttmp=$(getopt -o hv --long help,verbose,key:,keyring:root: -n "${0##*/}" -- "$@")
+getopttmp=$(getopt -o hv --long help,verbose,key:,keyring:,options:,root: -n "${0##*/}" -- "$@")
 eval set -- "$getopttmp"
 
 while true ; do
@@ -166,6 +171,7 @@ while true ; do
 		-v|--verbose) verbose=$((++verbose)); shift ;;
 		--key) password="$2"; is_generated=; shift 2 ;;
 		--keyring) keyring="$2"; shift 2 ;;
+		--options) crypttab_options="$2"; shift 2 ;;
 		--root) root_mp="$2"; is_rootfs=; shift 2 ;;
                 --) shift ; break ;;
                 *) echo "Internal error!" ; exit 1 ;;
@@ -296,7 +302,18 @@ make_rw "$root_mp"
 declare loop_UUID
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 if [ -n "$loop_UUID" ]; then
-	echo "$cr_name /dev/disk/by-uuid/$loop_UUID none x-initrd.attach" >> "$root_mp"/etc/crypttab
+	opts=
+	if [ -z "$crypttab_options" ] || [ "$crypttab_options" = "auto" ]; then
+		# TODO: should cr_etc and/or cr_var be attached to
+		# initrd in MicroOS?
+		if [ "$cr_name" = "cr_root" ]; then
+			opts="x-initrd.mount,x-initrd.attach"
+		fi
+	elif [ "$crypttab_options" != "none" ]; then
+		opts="$crypttab_options"
+	fi
+	[ -n "$opts" ] && echo "$cr_name /dev/disk/by-uuid/$loop_UUID none $opts" >> "$root_mp"/etc/crypttab
+	[ -z "$opts" ] && echo "$cr_name /dev/disk/by-uuid/$loop_UUID none" >> "$root_mp"/etc/crypttab
 else
 	warn "Can't determine device UUID. Can't generate crypttab"
 fi

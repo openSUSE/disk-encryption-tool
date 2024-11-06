@@ -57,15 +57,15 @@ if [ "$inhibitor" != $'\e' ]; then
 	root_options="auto"
 	if get_credentials partitions disk-encryption-tool-dracut.partitions; then
 		for line in "${partitions[@]}"; do
-			read -r cr_name device <<<"$line"
-			[ "$device" = "$root_device" ] && root_cr_name="$cr_name" && continue
+			read -r cr_name device options <<<"$line"
+			[ "$device" = "$root_device" ] && root_cr_name="$cr_name" && root_options="$options" && continue
 			echo "Encrypt $device"
-			/usr/bin/disk-encryption-tool --keyring cryptenroll --root /sysroot "$device" "$cr_name" || die "Encryption failed"
+			/usr/bin/disk-encryption-tool --keyring cryptenroll --options "${options:-auto}" --root /sysroot "$device" "$cr_name" || die "Encryption failed"
 		done
 	fi
 	if [ "$root_cr_root" != "skip" ]; then
 		echo "Encrypt /sysroot"
-		/usr/bin/disk-encryption-tool --keyring cryptenroll "/sysroot" "$root_cr_name" || die "Encryption failed"
+		/usr/bin/disk-encryption-tool --keyring cryptenroll --options "${root_options:-auto}" "/sysroot" "$root_cr_name" || die "Encryption failed"
 	fi
 fi
 # turn messages on again
