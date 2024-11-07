@@ -99,3 +99,13 @@ fi
 	echo "Enrolling a FIDO2 key"
 	sdbootutil enroll --method=fido2
 }
+
+# Clean the enrollment key.  disk-encryption-tool creates it in the
+# keyslot 0 with the name "enrollment-key", that is showed by
+# systemd-cryptenroll as "other"
+while read -r dev; do
+	slots=$(systemd-cryptenroll "$dev")
+	if grep -q "other" <<<"$slots"; then
+		systemd-cryptenroll --wipe-slot=0 "$dev"
+	fi
+done < <(sdbootutil list-devices)
