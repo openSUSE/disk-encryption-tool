@@ -16,7 +16,7 @@ depends() {
 install() {
 	instmods dmi_sysfs # for systemd credentials via smbios
 	inst_multiple -o cryptsetup-reencrypt
-	inst_multiple cryptsetup btrfs mktemp getopt mountpoint findmnt sfdisk tac sed hexdump keyctl partx
+	inst_multiple cryptsetup btrfs mktemp getopt mountpoint findmnt sfdisk tac sed keyctl partx
 
 	inst_script "$moddir"/disk-encryption-tool /usr/bin/disk-encryption-tool
 	inst_script "$moddir"/disk-encryption-tool-dracut /usr/bin/disk-encryption-tool-dracut
