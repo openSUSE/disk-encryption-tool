@@ -262,7 +262,7 @@ if [ -z "$password" ]; then
 	password="$(dd if=/dev/urandom bs=8 count=1 2> /dev/null | base64)"
 	if [ -n "$keyring" ]; then
 		echo -n "$password" | keyctl padd user "$keyring" @u > /dev/null
-		keyctl timeout %user:"$keyring" 600
+		keyctl timeout %user:"$keyring" 3600
 	fi
 	[ -z "$verbose" ] || echo -e "Enrollment key: \e[1m$password\e[m"
 fi
