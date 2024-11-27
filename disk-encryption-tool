@@ -203,50 +203,62 @@ if [ -d "$1" ] || [ -b "$1" ]; then
 fi
 shift 2
 
-declare loop_TYPE
+declare loop_TYPE is_btrfs is_swap
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 [ "$loop_TYPE" != crypto_LUKS ] || { echo "Already encrypted"; exit 0; }
-[ "$loop_TYPE" = btrfs ] || err "File system is ${loop_TYPE:-unknown} but only btrfs is supported"
+[ "$loop_TYPE" != btrfs ] || is_btrfs=1
+[ "$loop_TYPE" != swap ] || is_swap=1
 
-if [ -z "$mounted" ]; then
-	log_info "mounting fs"
-	mkdir -p "$tmpdir/mnt"
-	mount -t btrfs -o rw "${blkpart}" "$tmpdir/mnt"
-	mp="$tmpdir/mnt"
-else
-	mountpoint -q "$mp" || err "$mp is not mounted"
-	findmnt -o SOURCE,TARGET,FSTYPE,OPTIONS -Rvn --pairs "$mp" > "$tmpdir/mounts"
-	mount -o remount,rw "$mp"
+if [ -n "$is_btrfs" ]; then
+	if [ -z "$mounted" ]; then
+		log_info "mounting fs"
+		mkdir -p "$tmpdir/mnt"
+		mount -t btrfs -o rw "${blkpart}" "$tmpdir/mnt"
+		mp="$tmpdir/mnt"
+	else
+		mountpoint -q "$mp" || err "$mp is not mounted"
+		findmnt -o SOURCE,TARGET,FSTYPE,OPTIONS -Rvn --pairs "$mp" > "$tmpdir/mounts"
+		mount -o remount,rw "$mp"
+	fi
+
+	read -r minsize bytes _rest < <(btrfs inspect-internal min-dev-size "$mp")
+	isdigits "$minsize" || err "Failed to read minimum btrfs size"
+	[ "$bytes" = 'bytes' ] || err "Failed to read minimum btrfs size"
+
+	log_info "resizing fs"
+	btrfs filesystem resize "$minsize" "$mp"
+
+	if [ -e "$tmpdir/mounts" ]; then
+		# Subshell intentional here
+		tac "$tmpdir/mounts" | while read -r line; do
+			eval "$line"
+			umount "$TARGET"
+		done
+	else
+		umount "$mp"
+	fi
+	unset mp
+
+	settle_umount_events
+elif [ -n "$is_swap" ]; then
+	# sfdisk returns the size in Kilobytes. We choose a very small
+	# size, as in any case we need to do the mkswap later again
+	minsize=$(($(sfdisk --show-size "$blkpart")*1024))
+	minswap=$((512*1024))
+	minsize=$((minsize < minswap ? minsize : minswap))
 fi
 
-read -r minsize bytes _rest < <(btrfs inspect-internal min-dev-size "$mp")
-isdigits "$minsize" || err "Failed to read minimum btrfs size"
-[ "$bytes" = 'bytes' ] || err "Failed to read minimum btrfs size"
-
-log_info "resizing fs"
-btrfs filesystem resize "$minsize" "$mp"
-
-if [ -e "$tmpdir/mounts" ]; then
-	# subshell intentional here
-	tac "$tmpdir/mounts" | while read -r line; do
-		eval "$line"
-		umount "$TARGET"
-	done
-else
-	umount "$mp"
-fi
-unset mp
-
-settle_umount_events
-
-# Shrink partition to a minimum so reencryption doesn't write
-# everything
-log_info "resizing partition"
-echo "size=$((minsize/1024+32*1024))KiB" | sfdisk --force --no-reread -q -N "$partno" "$blkdev" &> /dev/null
-udevadm settle
-if [ -e /etc/initrd-release ]; then
-	# seems to be the only way to tell the kernel about a specific partition change
-	partx -u --nr "$partno" "$blkdev" || :
+if [ -n "$is_btrfs" ] || [ -n "$is_swap" ]; then
+	# Shrink partition to a minimum so reencryption doesn't write
+	# everything
+	log_info "resizing partition"
+	echo "size=$((minsize/1024+32*1024))KiB" | sfdisk --force --no-reread -q -N "$partno" "$blkdev" &> /dev/null
+	udevadm settle
+	if [ -e /etc/initrd-release ]; then
+		# Seems to be the only way to tell the kernel about a
+		# specific partition change
+		partx -u --nr "$partno" "$blkdev" || :
+	fi
 fi
 
 # If a keyring is set, see if the password is stored there and recover
@@ -270,34 +282,49 @@ fi
 echo "Encrypting..."
 encrypt "$@"
 
-log_info "grow partition again"
-echo ", +" | sfdisk --no-reread -q -N "$partno" "$blkdev" &> /dev/null
-if [ -e /etc/initrd-release ]; then
-	# seems to be the only way to tell the kernel about a specific partition change
-	partx -u --nr "$partno" "$blkdev" || :
-	cryptsetup resize "$cr_name" <<<"$password"
+if [ -n "$is_btrfs" ] || [ -n "$is_swap" ]; then
+	log_info "grow partition again"
+	# TODO: recover the size back
+	echo ", +" | sfdisk --no-reread -q -N "$partno" "$blkdev" &> /dev/null
+	if [ -e /etc/initrd-release ]; then
+		# Seems to be the only way to tell the kernel about a
+		# specific partition change
+		partx -u --nr "$partno" "$blkdev" || :
+		cryptsetup resize "$cr_name" <<<"$password"
+	fi
 fi
 
-if [ -z "$mounted" ]; then
-	mount -o rw "$cr_dev" "$tmpdir/mnt"
-	mp="$tmpdir/mnt"
-else
-	read -r line < "$tmpdir/mounts"
-	eval "$line"
-	mapfile -td, options < <(echo -n "$OPTIONS")
-	for ((i=0;i<${#options};++i)); do [ "${options[i]}" = ro ] && options[i]=rw; done
-	OPTIONS="$(IFS=, eval echo '"${options[*]}"')"
-	[ "$SOURCE" = "$blkpart" ] && SOURCE="$cr_dev"
-	mount "$cr_dev" "$TARGET" -t "$FSTYPE" -o "$OPTIONS"
-	mp="$TARGET"
+if [ -n "$is_btrfs" ]; then
+	if [ -z "$mounted" ]; then
+		mount -o rw "$cr_dev" "$tmpdir/mnt"
+		mp="$tmpdir/mnt"
+	else
+		read -r line < "$tmpdir/mounts"
+		eval "$line"
+		mapfile -td, options < <(echo -n "$OPTIONS")
+		for ((i=0;i<${#options};++i)); do [ "${options[i]}" = ro ] && options[i]=rw; done
+		OPTIONS="$(IFS=, eval echo '"${options[*]}"')"
+		[ "$SOURCE" = "$blkpart" ] && SOURCE="$cr_dev"
+		mount "$cr_dev" "$TARGET" -t "$FSTYPE" -o "$OPTIONS"
+		mp="$TARGET"
+	fi
+
+	log_info "resizing fs to max again"
+	btrfs filesystem resize max "$mp"
+
+	root_mp="${root_mp:-$mp}"
+
+	make_rw "$root_mp"
+elif [ -n "$is_swap" ]; then
+	declare loop_UUID
+	eval "$(blkid -c /dev/null -o export "$cr_dev"|sed 's/^/loop_/')"
+	if [ -n "$loop_UUID" ]; then
+		mkswap --uuid "$loop_UUID" "$cr_dev"
+	else
+		warn "Can't determine device UUID. Can't recreate swap with same UUID"
+		mkswap "$cr_dev"
+	fi
 fi
-
-log_info "resizing fs to max again"
-btrfs filesystem resize max "$mp"
-
-root_mp="${root_mp:-$mp}"
-
-make_rw "$root_mp"
 
 declare loop_UUID
 eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
@@ -306,7 +333,7 @@ if [ -n "$loop_UUID" ]; then
 	if [ -z "$crypttab_options" ] || [ "$crypttab_options" = "auto" ]; then
 		# TODO: should cr_etc and/or cr_var be attached to
 		# initrd in MicroOS?
-		if [ "$cr_name" = "cr_root" ]; then
+		if [ "$cr_name" = "cr_root" ] || [ "$cr_name" = "cr_swap" ]; then
 			opts="x-initrd.attach"
 		fi
 	elif [ "$crypttab_options" != "none" ]; then
@@ -318,6 +345,8 @@ else
 	warn "Can't determine device UUID. Can't generate crypttab"
 fi
 
-make_ro "$root_mp"
+if [ -n "$is_btrfs" ]; then
+	make_ro "$root_mp"
+fi
 
 echo "Image encryption completed"
