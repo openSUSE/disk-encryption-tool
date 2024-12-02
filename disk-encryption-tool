@@ -333,7 +333,7 @@ if [ -n "$loop_UUID" ]; then
 	if [ -z "$crypttab_options" ] || [ "$crypttab_options" = "auto" ]; then
 		# TODO: should cr_etc and/or cr_var be attached to
 		# initrd in MicroOS?
-		if [ "$cr_name" = "cr_root" ] || [ "$cr_name" = "cr_swap" ]; then
+		if [ "$cr_name" = "cr_root" ]; then
 			opts="x-initrd.attach"
 		fi
 	elif [ "$crypttab_options" != "none" ]; then
