@@ -63,7 +63,7 @@ if [ "$inhibitor" != $'\e' ]; then
 			/usr/bin/disk-encryption-tool --keyring cryptenroll --options "${options:-auto}" --root /sysroot "$device" "$cr_name" || die "Encryption failed"
 		done
 	fi
-	if [ "$root_cr_root" != "skip" ]; then
+	if [ "$root_options" != "skip" ]; then
 		echo "Encrypt /sysroot"
 		/usr/bin/disk-encryption-tool --keyring cryptenroll --options "${root_options:-auto}" "/sysroot" "$root_cr_name" || die "Encryption failed"
 	fi
