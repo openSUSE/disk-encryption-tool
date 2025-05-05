@@ -25,7 +25,7 @@ URL:            https://github.com/openSUSE/disk-encryption-tool
 Source:         disk-encryption-tool-%{version}.tar
 Requires:       cryptsetup
 Requires:       keyutils
-ExclusiveArch:  aarch64 ppc64le riscv64 x86_64
+ExclusiveArch:  aarch64 x86_64
 BuildArch:      noarch
 
 %description
