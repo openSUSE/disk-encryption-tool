@@ -328,9 +328,13 @@ eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 if [ -n "$loop_UUID" ]; then
 	opts=
 	if [ -z "$crypttab_options" ] || [ "$crypttab_options" = "auto" ]; then
-		# TODO: should cr_etc and/or cr_var be attached to
-		# initrd in MicroOS?
-		if [ "$cr_name" = "cr_root" ]; then
+		# cr_root and cr_etc are mounted early, in the
+		# initrd. For some reason cr_var too, event if in
+		# Tumbleweed should be mounted later (early after the
+		# switch root)
+		#
+		# https://systemd.io/MOUNT_REQUIREMENTS/
+		if [ "$cr_name" = "cr_root" || "$cr_name" = "cr_etc" || "$cr_name" = "cr_var" ]; then
 			opts="x-initrd.attach"
 		fi
 	elif [ "$crypttab_options" != "none" ]; then
