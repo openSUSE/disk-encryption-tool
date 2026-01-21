@@ -23,6 +23,23 @@ get_credentials()
 	readarray -t "$var" < "$CREDENTIALS_DIRECTORY/$name" || [ -n "${!var}" ]
 }
 
+clean_growpart_flag()
+{
+	local dev="$1"
+	local fstab_dev real_dev
+	for mnt in $(findmnt --tab-file /sysroot/etc/fstab --options x-growpart.grow --output TARGET --noheadings); do
+		fstab_dev="$(findmnt --tab-file /sysroot/etc/fstab --target "$mnt" --output SOURCE --noheadings)"
+		real_dev="$(findmnt --tab-file /sysroot/etc/fstab --target "$mnt" --evaluate --real --output SOURCE --noheadings)"
+		[ "$dev" = "$real_dev" ] && break
+		fstab_dev=
+	done
+	if [ -n "$fstab_dev" ]; then
+		mount -o remount,rw /sysroot
+		sed -i -E "/^${fstab_dev}/s/,x-growpart.grow|x-growpart.grow,//g" /sysroot/etc/fstab
+		mount -o remount,ro /sysroot
+	fi
+}
+
 encrypt=
 if get_credential encrypt disk-encryption-tool-dracut.encrypt && [ "$encrypt" = "no" ]; then
 	exit 0
@@ -61,11 +78,13 @@ if [ "$inhibitor" != $'\e' ]; then
 			[ "$device" = "$root_device" ] && root_cr_name="$cr_name" && root_options="$options" && continue
 			echo "Encrypt $device"
 			/usr/bin/disk-encryption-tool --keyring cryptenroll --options "${options:-auto}" --root /sysroot "$device" "$cr_name" || die "Encryption failed"
+			clean_growpart_flag "$device"
 		done
 	fi
 	if [ "$root_options" != "skip" ]; then
 		echo "Encrypt /sysroot"
 		/usr/bin/disk-encryption-tool --keyring cryptenroll --options "${root_options:-auto}" "/sysroot" "$root_cr_name" || die "Encryption failed"
+		clean_growpart_flag "$root_device"
 	fi
 fi
 # turn messages on again
