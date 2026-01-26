@@ -330,7 +330,7 @@ if [ -n "$loop_UUID" ]; then
 	if [ -z "$crypttab_options" ] || [ "$crypttab_options" = "auto" ]; then
 		# cr_root and cr_etc are mounted early, in the
 		# initrd. In openSUSE cr_var too because of the
-		# SELinux relaveling.  Technically we do not need
+		# SELinux re-labeling.  Technically we do not need
 		# x-initrd.attach here, as dracut is now able to
 		# recognize this.
 		#
