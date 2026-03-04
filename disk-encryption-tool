@@ -341,8 +341,8 @@ if [ -n "$loop_UUID" ]; then
 	elif [ "$crypttab_options" != "none" ]; then
 		opts="$crypttab_options"
 	fi
-	[ -n "$opts" ] && echo "$cr_name /dev/disk/by-uuid/$loop_UUID none $opts" >> "$root_mp"/etc/crypttab
-	[ -z "$opts" ] && echo "$cr_name /dev/disk/by-uuid/$loop_UUID none" >> "$root_mp"/etc/crypttab
+	[ -n "$opts" ] && echo "$cr_name UUID=$loop_UUID none $opts" >> "$root_mp"/etc/crypttab
+	[ -z "$opts" ] && echo "$cr_name UUID=$loop_UUID none" >> "$root_mp"/etc/crypttab
 else
 	warn "Can't determine device UUID. Can't generate crypttab"
 fi
