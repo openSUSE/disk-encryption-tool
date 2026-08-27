@@ -33,23 +33,23 @@ credential="$(mktemp disk-encryption-tool.XXXXXXXXXX)"
 # Enroll extra password
 # echo "SECRET_PASSWORD" > "$credential"
 echo "linux" > "$credential"
-systemd-creds encrypt --name=disk-encryption-tool-enroll.pw "$credential" \
-	      /etc/credstore.encrypted/disk-encryption-tool-enroll.pw
+systemd-creds encrypt --name=sdbootutil-enroll.pw "$credential" \
+	      /etc/credstore.encrypted/sdbootutil-enroll.pw
 
 # # Enroll TPM2 with secret PIN
 # echo "SECRET_PIN" > "$credential"
-# systemd-creds encrypt --name=disk-encryption-tool-enroll.tpm2+pin "$credential" \
-# 	      /etc/credstore.encrypted/disk-encryption-tool-enroll.tpm2+pin
+# systemd-creds encrypt --name=sdbootutil-enroll.tpm2+pin "$credential" \
+# 	      /etc/credstore.encrypted/sdbootutil-enroll.tpm2+pin
 
 # # Enroll TPM2
 # echo "1" > "$credential"
-# systemd-creds encrypt --name=disk-encryption-tool-enroll.tpm2 "$credential" \
-# 	      /etc/credstore.encrypted/disk-encryption-tool-enroll.tpm2
+# systemd-creds encrypt --name=sdbootutil-enroll.tpm2 "$credential" \
+# 	      /etc/credstore.encrypted/sdbootutil-enroll.tpm2
 
 # # Enroll FIDO2
 # echo "1" > "$credential"
-# systemd-creds encrypt --name=disk-encryption-tool-enroll.fido2 "$credential" \
-# 	      /etc/credstore.encrypted/disk-encryption-tool-enroll.fido2
+# systemd-creds encrypt --name=sdbootutil-enroll.fido2 "$credential" \
+# 	      /etc/credstore.encrypted/sdbootutil-enroll.fido2
 
 shred -u "$credential"
 
@@ -72,6 +72,16 @@ if [ "$(findmnt -nrvo SOURCE /)" != "/dev/mapper/cr_root" ]; then
 	echo "Not encrypted?"
 	exit 1
 fi
+# The root filesystem is on /dev/mapper/cr_root whether the enrollment
+# ran or not, opened by the key that disk-encryption-tool generated, so
+# the check above says nothing about it.  The credential asked for
+# "linux" as an extra password, and only the device can confirm it
+backing="$(cryptsetup status cr_root | sed -n 's,^ *device: *,,p')"
+systemd-cryptenroll "$backing"
+if ! printf 'linux' | cryptsetup luksOpen --test-passphrase "$backing"; then
+	echo "The password credential was not enrolled"
+	exit 1
+fi
 mount -t 9p -o trans=virtio tmpdir /mnt
 touch /mnt/done
 umount /mnt
@@ -80,8 +90,14 @@ EOF
 chmod a+x /usr/bin/combustion-validate
 
 cat >>/etc/systemd/system/combustion-validate.service <<'EOF'
+[Unit]
+# Both are pulled by default.target with nothing ordering them, so
+# without this the check for the enrolled password can run first
+After=sdbootutil-enroll.service
+
 [Service]
 ExecStart=/usr/bin/combustion-validate
+
 [Install]
 RequiredBy=default.target
 EOF
