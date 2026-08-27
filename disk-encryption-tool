@@ -272,6 +272,19 @@ fi
 
 if [ -z "$password" ]; then
 	password="$(dd if=/dev/urandom bs=8 count=1 2> /dev/null | base64)"
+	# Without a timeout, unlike every key that sdbootutil adds, and
+	# on purpose.  A timer armed here would have to cover the
+	# reencryption that starts a few lines below, which takes as
+	# long as the disk is large, then the rest of the boot, and then
+	# a jeos-firstboot that waits for whoever is at the console.
+	# There is no later point to re-arm it from either: this script
+	# is done once the disk is encrypted, and nothing runs again
+	# until the enrollment.  A key that expires first leaves a
+	# device whose only keyslot is one that nobody can open
+	#
+	# What it costs is bounded: the entry is readable by root alone,
+	# it is gone at the next boot, and the keyslot it opens is wiped
+	# as soon as something else is enrolled
 	[ -z "$keyring" ] || echo -n "$password" | keyctl padd user "$keyring" @u > /dev/null
 	[ -z "$verbose" ] || echo -e "Enrollment key: \e[1m$password\e[m"
 fi
