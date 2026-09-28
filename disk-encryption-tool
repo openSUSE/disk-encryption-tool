@@ -17,8 +17,8 @@ root_mp=
 is_generated=1
 is_rootfs=1
 switched_rw=
-cr_name=
-cr_dev=
+volume_name=
+volume_dev=
 blkdev=
 blkpart=
 mp=
@@ -42,8 +42,8 @@ cleanup()
 			while read -r line; do
 				eval "$line"
 				mapfile -td, options < <(echo -n "$OPTIONS")
-				if [ -n "$cr_dev" ] && [ "$SOURCE" = "$blkpart" ]; then
-					SOURCE="$cr_dev"
+				if [ -n "$volume_dev" ] && [ "$SOURCE" = "$blkpart" ]; then
+					SOURCE="$volume_dev"
 				fi
 				mount "$SOURCE" "$TARGET" -t "$FSTYPE" -o "$OPTIONS"
 			done < "$tmpdir/mounts"
@@ -59,7 +59,7 @@ helpandquit()
 		Usage: $0 [OPTIONS] [MOUNTPOINT|BLOCKDEV] [VOLUME_NAME]
 
 		Encrypt MOUNTPOINT or BLOCKDEV.  If not specified, uses /sysroot
-		Default VOLUME_NAME is cr_root
+		Default VOLUME_NAME is root
 
 		OPTIONS:
 		  --verbose       verbose
@@ -132,12 +132,12 @@ encrypt()
 	log_info "encrypt with options ${encrypt_options[*]}"
 	if [ -n "$password" ]; then
 		# XXX: hopefully we can use the kernel keyring in the future here
-		cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name" <<<"$password"
+		cryptsetup reencrypt --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$volume_name" <<<"$password"
 		[ -z "$is_generated" ] || echo '{"type":"enrollment-key","keyslots":["0"]}' | cryptsetup token import "${blkpart}"
 	else
-		cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$cr_name"
+		cryptsetup reencrypt --batch-mode --verify-passphrase --force-password --verbose --encrypt "${encrypt_options[@]}" "$@" "${blkpart}" "$volume_name"
 	fi
-	cr_dev="/dev/mapper/$cr_name"
+	volume_dev="/dev/mapper/$volume_name"
 }
 
 make_rw()
@@ -178,12 +178,12 @@ while true ; do
         esac
 done
 
-[ -z "$1" ] && [ -e /etc/initrd-release ] && set -- /sysroot cr_root
+[ -z "$1" ] && [ -e /etc/initrd-release ] && set -- /sysroot root
 
 { [ -n "$1" ] && [ -n "$2" ]; } || helpandquit
 
-cr_name="$2"
-[ -e "/dev/mapper/$cr_name" ] && err "$cr_name exists. Exit."
+volume_name="$2"
+[ -e "/dev/mapper/$volume_name" ] && err "$volume_name exists. Exit."
 
 if [ -d "$1" ] || [ -b "$1" ]; then
 	if [ -b "$1" ]; then
@@ -300,13 +300,13 @@ if [ -n "$is_btrfs" ] || [ -n "$is_swap" ]; then
 		# Seems to be the only way to tell the kernel about a
 		# specific partition change
 		partx -u --nr "$partno" "$blkdev" || :
-		cryptsetup resize "$cr_name" <<<"$password"
+		cryptsetup resize "$volume_name" <<<"$password"
 	fi
 fi
 
 if [ -n "$is_btrfs" ]; then
 	if [ -z "$mounted" ]; then
-		mount -o rw "$cr_dev" "$tmpdir/mnt"
+		mount -o rw "$volume_dev" "$tmpdir/mnt"
 		mp="$tmpdir/mnt"
 	else
 		read -r line < "$tmpdir/mounts"
@@ -314,8 +314,8 @@ if [ -n "$is_btrfs" ]; then
 		mapfile -td, options < <(echo -n "$OPTIONS")
 		for ((i=0;i<${#options};++i)); do [ "${options[i]}" = ro ] && options[i]=rw; done
 		OPTIONS="$(IFS=, eval echo '"${options[*]}"')"
-		[ "$SOURCE" = "$blkpart" ] && SOURCE="$cr_dev"
-		mount "$cr_dev" "$TARGET" -t "$FSTYPE" -o "$OPTIONS"
+		[ "$SOURCE" = "$blkpart" ] && SOURCE="$volume_dev"
+		mount "$volume_dev" "$TARGET" -t "$FSTYPE" -o "$OPTIONS"
 		mp="$TARGET"
 	fi
 
@@ -327,12 +327,12 @@ if [ -n "$is_btrfs" ]; then
 	make_rw "$root_mp"
 elif [ -n "$is_swap" ]; then
 	declare loop_UUID
-	eval "$(blkid -c /dev/null -o export "$cr_dev"|sed 's/^/loop_/')"
+	eval "$(blkid -c /dev/null -o export "$volume_dev"|sed 's/^/loop_/')"
 	if [ -n "$loop_UUID" ]; then
-		mkswap --uuid "$loop_UUID" "$cr_dev"
+		mkswap --uuid "$loop_UUID" "$volume_dev"
 	else
 		warn "Can't determine device UUID. Can't recreate swap with same UUID"
-		mkswap "$cr_dev"
+		mkswap "$volume_dev"
 	fi
 fi
 
@@ -341,21 +341,24 @@ eval "$(blkid -c /dev/null -o export "$blkpart"|sed 's/^/loop_/')"
 if [ -n "$loop_UUID" ]; then
 	opts=
 	if [ -z "$crypttab_options" ] || [ "$crypttab_options" = "auto" ]; then
-		# cr_root and cr_etc are mounted early, in the
-		# initrd. In openSUSE cr_var too because of the
-		# SELinux re-labeling.  Technically we do not need
-		# x-initrd.attach here, as dracut is now able to
-		# recognize this.
+		# root and etc are mounted early, in the initrd. In
+		# openSUSE var too because of the SELinux re-labeling.
+		# Technically we do not need x-initrd.attach here, as
+		# dracut is now able to recognize this.
+		#
+		# "root" is the name that the Discoverable Partitions
+		# Specification sets, and "cr_root" the one used
+		# before.
 		#
 		# https://systemd.io/MOUNT_REQUIREMENTS/
-		if [ "$cr_name" = "cr_root" ]; then
+		if [ "$volume_name" = "root" ] || [ "$volume_name" = "cr_root" ]; then
 			opts="x-initrd.attach"
 		fi
 	elif [ "$crypttab_options" != "none" ]; then
 		opts="$crypttab_options"
 	fi
-	[ -n "$opts" ] && echo "$cr_name UUID=$loop_UUID none $opts" >> "$root_mp"/etc/crypttab
-	[ -z "$opts" ] && echo "$cr_name UUID=$loop_UUID none" >> "$root_mp"/etc/crypttab
+	[ -n "$opts" ] && echo "$volume_name UUID=$loop_UUID none $opts" >> "$root_mp"/etc/crypttab
+	[ -z "$opts" ] && echo "$volume_name UUID=$loop_UUID none" >> "$root_mp"/etc/crypttab
 else
 	warn "Can't determine device UUID. Can't generate crypttab"
 fi
